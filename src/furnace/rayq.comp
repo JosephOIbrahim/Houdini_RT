@@ -1,0 +1,191 @@
+#version 460
+#extension GL_EXT_ray_query : require
+
+// s2-rayquery: inline ray queries against a host-built TLAS (two instances).
+//
+//   instance 0  unit cube [0,1]^3      mask 0x1   (hit distances, furnace walls)
+//   instance 1  occluder triangle      mask 0x2   (shadow test only)
+//
+// One dispatch covers three measurements; each invocation does exactly one job, chosen by its
+// index, and writes one float. The program only measures. An independent judge decides.
+//
+//   [0, nDirs)                      first-hit distance from the camera along dirs[i]   (-1 = miss)
+//   [nDirs, nDirs+nProbes)          1.0 if the segment light->probe is blocked, else 0.0
+//   [.., .. + nFurn*samples)        one path's radiance in the closed Lambertian box
+//
+// Furnace estimator: uniform direction from the probe, then uniform-hemisphere bounces about
+// the inward wall normal. Every hit adds E * throughput; each bounce multiplies throughput by
+// rho * 2 * cos(theta) (Lambert BRDF rho/pi, times cos, over pdf 1/(2 pi)). With the first hit
+// plus `budget` bounces the expectation is E * (1 - rho^(budget+1)) / (1 - rho).
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+const uint MAX_DIRS = 24u;
+const uint MAX_PROBES = 144u;
+const uint MAX_FURN = 4u;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+
+layout(std430, set = 0, binding = 1) readonly buffer Scene
+{
+    vec4 camera;                 // xyz
+    vec4 light;                  // xyz
+    vec4 params;                 // rho, E, unused, unused
+    uvec4 counts;                // nDirs, nProbes, nFurn, samples per furnace probe
+    uvec4 misc;                  // budget, seed, unused, unused
+    vec4 dirs[MAX_DIRS];
+    vec4 probes[MAX_PROBES];
+    vec4 furn[MAX_FURN];
+} scene;
+
+layout(std430, set = 0, binding = 2) writeonly buffer Results
+{
+    float value[];
+} results;
+
+const uint MASK_CUBE = 0x1u;
+const uint MASK_OCCLUDER = 0x2u;
+const float T_MAX = 1.0e4;
+const float PI = 3.14159265358979;
+
+uint pcg_next(inout uint state)
+{
+    state = state * 747796405u + 2891336453u;
+    const uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// murmur3 finaliser: a full-avalanche 32-bit mix
+uint mix32(uint h)
+{
+    h ^= h >> 16u;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13u;
+    h *= 0xC2B2AE35u;
+    h ^= h >> 16u;
+    return h;
+}
+
+float rand01(inout uint state)
+{
+    return float(pcg_next(state) >> 8u) * (1.0 / 16777216.0);
+}
+
+vec3 uniform_sphere(inout uint state)
+{
+    const float z = 1.0 - 2.0 * rand01(state);
+    const float r = sqrt(max(0.0, 1.0 - z * z));
+    const float phi = 2.0 * PI * rand01(state);
+    return vec3(r * cos(phi), r * sin(phi), z);
+}
+
+// Closest hit against the instances selected by `mask`. Returns t along `direction` (in units
+// of |direction|, which is NOT normalised here on purpose), or -1 on a miss.
+float closest_hit(vec3 origin, vec3 direction, float t_min, float t_max, uint mask)
+{
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, mask, origin, t_min, direction, t_max);
+    while (rayQueryProceedEXT(rq)) {}
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        return rayQueryGetIntersectionTEXT(rq, true);
+    }
+    return -1.0;
+}
+
+bool any_hit(vec3 origin, vec3 direction, float t_min, float t_max, uint mask)
+{
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, mask, origin, t_min, direction, t_max);
+    while (rayQueryProceedEXT(rq)) {}
+    return rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT;
+}
+
+// Inward normal of the unit cube at a point on (or within float error of) one of its faces.
+vec3 cube_inward_normal(vec3 p)
+{
+    const vec3 lo = abs(p);
+    const vec3 hi = abs(vec3(1.0) - p);
+    float best = lo.x;
+    vec3 n = vec3(1.0, 0.0, 0.0);
+    if (lo.y < best) { best = lo.y; n = vec3(0.0, 1.0, 0.0); }
+    if (lo.z < best) { best = lo.z; n = vec3(0.0, 0.0, 1.0); }
+    if (hi.x < best) { best = hi.x; n = vec3(-1.0, 0.0, 0.0); }
+    if (hi.y < best) { best = hi.y; n = vec3(0.0, -1.0, 0.0); }
+    if (hi.z < best) { best = hi.z; n = vec3(0.0, 0.0, -1.0); }
+    return n;
+}
+
+float furnace_path(vec3 probe, inout uint rng)
+{
+    const float rho = scene.params.x;
+    const float emission = scene.params.y;
+    const uint budget = scene.misc.x;
+
+    vec3 origin = probe;
+    vec3 direction = uniform_sphere(rng);
+    float throughput = 1.0;
+    float radiance = 0.0;
+
+    for (uint bounce = 0u; bounce <= budget; ++bounce)
+    {
+        const float t = closest_hit(origin, direction, 1.0e-4, T_MAX, MASK_CUBE);
+        if (t < 0.0)
+        {
+            break;   // a leak out of the closed box: the path ends and the estimate drops
+        }
+        radiance += throughput * emission;
+        if (bounce == budget)
+        {
+            break;
+        }
+        const vec3 hit = origin + t * direction;
+        const vec3 n = cube_inward_normal(hit);
+        vec3 next = uniform_sphere(rng);
+        float cos_theta = dot(next, n);
+        if (cos_theta < 0.0)
+        {
+            next = -next;
+            cos_theta = -cos_theta;
+        }
+        throughput *= rho * 2.0 * cos_theta;
+        origin = clamp(hit, vec3(0.0), vec3(1.0)) + n * 1.0e-4;
+        direction = next;
+    }
+    return radiance;
+}
+
+void main()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    const uint n_dirs = scene.counts.x;
+    const uint n_probes = scene.counts.y;
+    const uint n_furn = scene.counts.z;
+    const uint samples = scene.counts.w;
+    const uint total = n_dirs + n_probes + n_furn * samples;
+    if (index >= total)
+    {
+        return;
+    }
+
+    if (index < n_dirs)
+    {
+        results.value[index] = closest_hit(scene.camera.xyz, scene.dirs[index].xyz, 0.0, T_MAX, MASK_CUBE);
+        return;
+    }
+
+    if (index < n_dirs + n_probes)
+    {
+        const vec3 probe = scene.probes[index - n_dirs].xyz;
+        const vec3 to_probe = probe - scene.light.xyz;   // t in [0, 1] spans light -> probe
+        results.value[index] = any_hit(scene.light.xyz, to_probe, 0.0, 1.0, MASK_OCCLUDER) ? 1.0 : 0.0;
+        return;
+    }
+
+    const uint k = index - n_dirs - n_probes;
+    const uint probe_index = k / samples;
+    // Decorrelated per-path stream: hash the path index, mix in the seed, hash again. (XOR-ing
+    // a multiple of the index into the seed left LCG streams related for some seeds.)
+    uint rng = mix32(scene.misc.y + mix32(k + 0x9E3779B9u));
+    results.value[index] = furnace_path(scene.furn[probe_index].xyz, rng);
+}

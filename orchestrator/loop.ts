@@ -20,7 +20,7 @@
 // Keyless self-test of the machinery: npm run smoke
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync, copyFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -173,6 +173,27 @@ async function draftFrontier(m: Milestone, wt: string): Promise<void> {
   void wt;
 }
 
+// The next round restores verify/ from the trusted snapshot, which erases the exam's logs.
+// Keep a copy where the repair Generator can read it, and put the tails in the ticket itself
+// so the ticket is actionable even when the Diagnostician adds nothing.
+function captureCheckLogs(wt: string): string {
+  const dir = join(wt, "verify");
+  const keep = join(wt, ".claude", "rules", "last_check");
+  let out = "";
+  try {
+    mkdirSync(keep, { recursive: true });
+    for (const f of readdirSync(dir)) {
+      if (!/\.(log|json)$/.test(f)) continue;
+      copyFileSync(join(dir, f), join(keep, f));
+      if (f.endsWith(".log")) {
+        const lines = readFileSync(join(dir, f), "utf8").split("\n");
+        out += `\n## ${f} (last 60 lines; full copy at .claude/rules/last_check/${f})\n\`\`\`\n${lines.slice(-60).join("\n")}\n\`\`\`\n`;
+      }
+    }
+  } catch { /* evidence is best-effort */ }
+  return out;
+}
+
 // -------------------------------------------------------------- per-milestone
 async function buildMilestone(m: Milestone, state: HarnessState, integrationWt: string): Promise<"merged" | "halted" | "env_wedged" | "night_over" | "frontier"> {
   const ms = state.milestones[m.id];
@@ -202,7 +223,7 @@ async function buildMilestone(m: Milestone, state: HarnessState, integrationWt: 
     const ticketPath = join(wt, ".claude", "rules", "remediation_ticket.md");
     const repair = ms.round > 1 && existsSync(ticketPath);
     const task = repair
-      ? `REPAIR MODE.\nRead .claude/rules/remediation_ticket.md and fix ONLY the listed failure. No unrelated refactors. ` +
+      ? `REPAIR MODE.\nRead .claude/rules/remediation_ticket.md (the exam logs from the failed run are copied in .claude/rules/last_check/) and fix ONLY the listed failure. No unrelated refactors. ` +
         `Run \`bash ${m.check} $RANDOM\` locally until it passes, then make ONE atomic commit and update claude-progress.md.`
       : `BUILD MODE.\nImplement exactly one milestone: "${m.id}".\n${m.desc}\n` +
         `Read CLAUDE.md and specs/build-spec.md §${m.id} first — the spec's acceptance criteria ARE the check. ` +
@@ -232,7 +253,7 @@ async function buildMilestone(m: Milestone, state: HarnessState, integrationWt: 
     }
 
     // FAIL / CRASH / TIMEOUT → skeleton ticket from evidence, Diagnostician enriches.
-    writeTicket(wt, renderSkeletonTicket(m.id, ms.round + 1, outcome));
+    writeTicket(wt, renderSkeletonTicket(m.id, ms.round + 1, outcome) + captureCheckLogs(wt));
     await runAgent("diagnostician",
       `The trusted check for "${m.id}" did not pass. A skeleton ticket with raw evidence is at ` +
       `.claude/rules/remediation_ticket.md. Read it, read verify/evidence.json if present, read the relevant logs and the ` +

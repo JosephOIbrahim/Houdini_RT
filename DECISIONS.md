@@ -11,3 +11,6 @@
 - Line endings are load-bearing: `.gitattributes` pins `*.sh` to LF and `*.bat` to CRLF. A batch file with LF (or a shell script with CRLF) breaks under its own interpreter before any real error surfaces.
 - MSVC host build, confirmed on the 4090: `/bigobj` is **required** for the LUT translation unit (upgrades the 2026-10-04 "possibly"), and `/wd4305 /wd4996` must be silenced for a clean build (`/std:c++17 /O2 /EHsc /W3`).
 - Fidelity exams carry a **copy guard**: rows byte-identical to the CPU reference are capped (≤16; s1 landed at 8) so a GPU that merely echoes the reference fails. The kernel must genuinely compute — never reuse or copy reference rows.
+## 2026-10-05 (human)
+- Reference code for BLAS/TLAS construction and GLSL ray queries is in `third_party/sascha_willems_vulkan/` (MIT). Read its README first. Adapt, do not link: it depends on a framework this project does not use.
+- In GLSL an acceleration structure is declared `layout(binding = N) uniform accelerationStructureEXT name;`. The `uniform` qualifier is required.

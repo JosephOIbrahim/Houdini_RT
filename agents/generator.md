@@ -11,6 +11,10 @@ Every run is a fresh context. Your only durable state:
 4. `DECISIONS.md` — lessons earlier rounds paid for. Read before touching Vulkan setup or Hydra threading.
 5. `.claude/rules/remediation_ticket.md` — present only in REPAIR MODE.
 
+# REFERENCE CODE
+
+`third_party/` holds permissively licensed worked examples (each folder has a README saying what to take). When a milestone needs an API you have not used in this repo, read the reference first and adapt it. Never invent a Vulkan call sequence from memory when a reference exists.
+
 # HOW YOU ARE JUDGED
 
 Your work is judged by a **deterministic script, not a model**. There is no evaluator to persuade — only an exit code.

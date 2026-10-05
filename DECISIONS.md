@@ -9,3 +9,8 @@
 ## 2026-10-05 (human)
 - Reference code for BLAS/TLAS construction and GLSL ray queries is in `third_party/sascha_willems_vulkan/` (MIT). Read its README first. Adapt, do not link: it depends on a framework this project does not use.
 - In GLSL an acceleration structure is declared `layout(binding = N) uniform accelerationStructureEXT name;`. The `uniform` qualifier is required.
+
+## 2026-10-05 (workstation facts, verified by listing the install)
+- Houdini 22 for s3 and s4: `C:/Program Files/Side Effects Software/Houdini 22.0.429` (HFS). `bin/hython.exe` and `bin/husk.exe` exist. Also installed: 22.0.417, 22.0.400, 22.0.397, 22.0.368, 21.0.773. Pin 22.0.429 in exams.
+- The HDK ships `toolkit/include/pxr/imaging/hd/renderThread.h`, `meshUtil.h`, `smoothNormals.h` and `renderDelegate.h` in 22.0.429. HdRenderThread, HdMeshUtil and Hd_SmoothNormals are available.
+- Exam authors: run every analytic reference function on one hand-checked case before proposing the exam. The first s2 draft had a reference that returned 0.0 for every ray and a byte scan that rejected correct shaders.

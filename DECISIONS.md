@@ -14,3 +14,11 @@
 ## 2026-10-05 (human)
 - Reference code for BLAS/TLAS construction and GLSL ray queries is in `third_party/sascha_willems_vulkan/` (MIT). Read its README first. Adapt, do not link: it depends on a framework this project does not use.
 - In GLSL an acceleration structure is declared `layout(binding = N) uniform accelerationStructureEXT name;`. The `uniform` qualifier is required.
+
+## 2026-10-05 (s2-rayquery, human + cloud assistant)
+- KHR acceleration-structure functions are not exported by vulkan-1.lib; fetch them with vkGetDeviceProcAddr (see `AsApi` in rayq_host.cpp).
+- Scratch buffers for AS builds are over-allocated and the device address rounded up to `minAccelerationStructureScratchOffsetAlignment`.
+- One TLAS, two instances, visibility masks: cube 0x1, occluder 0x2. Shadow rays use mask 0x2 so they do not see the cube; the light is outside the cube.
+- A ray from inside a closed box reports the EXIT distance. The first draft of the s2 exam had the reference returning 0.0; it was corrected by the owner's decision.
+- Per-path RNG must be seeded through a full-avalanche hash of (seed, path index). XOR-ing a multiple of the index into the seed gave a reproducible 3.7 sigma furnace outlier for one seed.
+- The furnace uses uniform-hemisphere bounces (weight rho * 2 cos), an unbiased estimator with real variance. At rho = 0.8 expect a statistical exam failure roughly once per hundred runs; that is the 3 sigma test, not a bug.

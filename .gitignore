@@ -8,3 +8,5 @@ verify/evidence.json
 verify/*.log
 STOP
 .claude/loop.pid
+.claude/router_log.jsonl
+.claude/needs_human.json

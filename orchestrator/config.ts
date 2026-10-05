@@ -44,6 +44,16 @@ export const CONFIG = {
   // Frontier mode: when the next milestone's check is unauthored, draft it for review instead of halting idle.
   frontierDrafts: env("NIGHT_FRONTIER", "1") !== "0",
 
+  // Failure routing. Rules decide first; Jev advises. See router.ts for the policy.
+  router: {
+    mode: env("NIGHT_ROUTER", "act"),   // off | shadow | advise | act
+    model: "jev-latest",
+    act: 0.9,        // Jev probability needed (with a rule signal) to stop a milestone early
+    lean: 0.5,       // Jev probability needed to add a hint to the ticket
+    streak: 3,       // same failing stage this many rounds running = stalled (rule)
+    timeoutMs: 8000,
+  },
+
   // Tool scope per role (least privilege).
   tools: {
     generator:     ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],

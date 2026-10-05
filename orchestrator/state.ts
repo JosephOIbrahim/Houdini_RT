@@ -39,6 +39,7 @@ export interface MilestoneState {
   round: number;              // 1-based; increments on every FAIL/CRASH/TIMEOUT
   lastOutcome?: Outcome;
   mergedSha?: string;
+  stageHistory?: string[];    // failing stage per round, for the router's stall rule
 }
 
 export interface HarnessState {

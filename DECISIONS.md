@@ -22,3 +22,5 @@
 - A ray from inside a closed box reports the EXIT distance. The first draft of the s2 exam had the reference returning 0.0; it was corrected by the owner's decision.
 - Per-path RNG must be seeded through a full-avalanche hash of (seed, path index). XOR-ing a multiple of the index into the seed gave a reproducible 3.7 sigma furnace outlier for one seed.
 - The furnace uses uniform-hemisphere bounces (weight rho * 2 cos), an unbiased estimator with real variance. At rho = 0.8 expect a statistical exam failure roughly once per hundred runs; that is the 3 sigma test, not a bug.
+- The s2 exam disassembles `rayq.spv` with `spirv-dis` and fails (exit 11) if no ray-query instruction is present: the kernel must genuinely use inline ray queries — a compute-only fallback or a hand-rolled intersection pass does not count.
+- Host protocol the exam greps for (keep it in s3/s4 hosts too): a device line naming the GPU and its type, a `rayQuery: supported` line, and an echo of the injected seed (`seed N:`). Missing any of them is exit 15; a software device is rejected outright.

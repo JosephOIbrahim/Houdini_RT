@@ -154,6 +154,10 @@ async function draftFrontier(m: Milestone, wt: string): Promise<void> {
   mkdirSync(draftsDir, { recursive: true });
   const target = `drafts/${m.id}.check.sh`;
   const notes = `drafts/${m.id}.notes.md`;
+  if (existsSync(join(ROOT, target))) {
+    console.log(`\n◆ FRONTIER DRAFT READY: ${target} is already waiting for review. Not redrafting. Seal it (or delete it to get a fresh draft).`);
+    return;
+  }
   console.log(`\n=== frontier: drafting ${target} for human review ===`);
   await runAgent("drafter",
     `FRONTIER MODE.\nThe trusted check for milestone "${m.id}" does not exist yet (verify/ holds an exit-90 stub).\n` +

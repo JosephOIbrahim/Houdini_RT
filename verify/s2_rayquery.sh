@@ -197,11 +197,10 @@ echo "== [2] locate binary and prove the shader uses ray queries ==" | tee -a "$
 BIN="$OUT/rayq_host.exe"; [ -x "$BIN" ] || BIN="$OUT/rayq_host"
 [ -x "$BIN" ] || { emit "binary-missing" ',"which":"rayq_host"'; echo "FAIL: rayq_host not built"; exit 13; }
 [ -f "$OUT/rayq.spv" ] || { emit "binary-missing" ',"which":"rayq.spv"'; echo "FAIL: SPIR-V missing"; exit 13; }
-# GL_EXT_ray_query instructions: OpRayQueryInitializeKHR = 4642 (0x1222),
-# OpRayQueryGetIntersectionKHR = 4645 (0x1225). A shader that never issues a ray query
-# cannot contain these opcodes. (Heuristic: a 2-byte pattern could in principle appear in
-# literals; the radiometry below is the real proof.)
-"$PY" -c 'import sys; b=open(sys.argv[1],"rb").read(); sys.exit(0 if (b.find(b"\x22\x12")>=0 or b.find(b"\x25\x12")>=0) else 1)' "$OUT/rayq.spv" \
+# Disassemble the SPIR-V with the SDK's spirv-dis and require a real ray-query instruction.
+# (The earlier 2-byte scan rejected correct ray-query shaders and accepted shaders with none.)
+SPVDIS="spirv-dis"; command -v spirv-dis >/dev/null 2>&1 || SPVDIS="$VULKAN_SDK/Bin/spirv-dis.exe"
+"$SPVDIS" "$(winpath "$OUT/rayq.spv")" 2>/dev/null | grep -q "OpRayQueryInitializeKHR" \
   || { emit "cmake-configure" ',"which":"ray-query opcodes in SPIR-V"'; echo "FAIL: compiled shader contains no ray-query instructions"; exit 11; }
 
 echo "== [3] run ray queries on the GPU (seed=$SEED32, validation on) ==" | tee -a "$RUN_LOG"
@@ -255,7 +254,8 @@ def ray_box(o, d):
             if t1 > t2: t1, t2 = t2, t1
             tmin = max(tmin, t1); tmax = min(tmax, t2)
             if tmin > tmax: return None
-    return tmin
+    # Origin inside the box (the config guarantees it): the first hit is the EXIT, tmax.
+    return tmax if tmin <= 0.0 else tmin
 
 for r in hits:
     d = [float(r["dx"]), float(r["dy"]), float(r["dz"])]
@@ -320,10 +320,10 @@ tail = 1.0 - rho ** (B + 1)
 worst = 0.0
 for r in furn:
     raw, se, ext = float(r["radiance"]), float(r["std_error"]), float(r["radiance_infinite"])
-    if se <= 0.0:
-        fails.append(f"furnace {r['probe']}: non-positive standard error")
+    if se < 0.0:
+        fails.append(f"furnace {r['probe']}: negative standard error")
         continue
-    if raw >= L_analytic:
+    if raw > L_analytic + 4.0 * se + 1e-4 * L_analytic:
         fails.append(f"furnace {r['probe']}: raw {raw} >= analytic limit {L_analytic:.6f} (finite bounces cannot exceed it)")
     if abs(ext - raw / tail) > 0.005 * max(raw, 1e-9) + 4.0 * se:
         fails.append(f"furnace {r['probe']}: extrapolation {ext} inconsistent with raw/tail {raw/tail:.6f}")

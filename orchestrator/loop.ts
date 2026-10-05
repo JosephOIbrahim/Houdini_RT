@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { CONFIG, Milestone } from "./config.js";
 import { loadState, saveState, HarnessState, Outcome } from "./state.js";
 import { runChecks, renderSkeletonTicket, restoreTrustedVerify } from "./verify.js";
+import { adviseFailure } from "./router.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const STATE_PATH = join(ROOT, ".claude", "state.json");
@@ -195,7 +196,7 @@ function captureCheckLogs(wt: string): string {
 }
 
 // -------------------------------------------------------------- per-milestone
-async function buildMilestone(m: Milestone, state: HarnessState, integrationWt: string): Promise<"merged" | "halted" | "env_wedged" | "night_over" | "frontier"> {
+async function buildMilestone(m: Milestone, state: HarnessState, integrationWt: string): Promise<"merged" | "halted" | "env_wedged" | "night_over" | "frontier" | "escalate"> {
   const ms = state.milestones[m.id];
   const wt = makeWorktree(m.id);
 
@@ -253,7 +254,19 @@ async function buildMilestone(m: Milestone, state: HarnessState, integrationWt: 
     }
 
     // FAIL / CRASH / TIMEOUT → skeleton ticket from evidence, Diagnostician enriches.
-    writeTicket(wt, renderSkeletonTicket(m.id, ms.round + 1, outcome) + captureCheckLogs(wt));
+    const stageKey = outcome.kind === "fail" ? outcome.stage : outcome.kind;
+    ms.stageHistory = [...(ms.stageHistory ?? []), stageKey]; saveState(STATE_PATH, state);
+    const logsText = captureCheckLogs(wt);
+    const advice = await adviseFailure({
+      root: ROOT, wt, milestone: m.id, desc: m.desc, round: ms.round, maxRounds: CONFIG.maxRounds,
+      outcome, logsText, stageHistory: ms.stageHistory, cfg: CONFIG.router,
+    });
+    writeTicket(wt, renderSkeletonTicket(m.id, ms.round + 1, outcome) + logsText + advice.ticketNote);
+    if (advice.escalate) {
+      ms.status = "halted"; saveState(STATE_PATH, state);
+      console.error(`\n◆ ROUTER ESCALATION (${advice.route}): ${advice.reason}\n  Stopping this milestone early instead of spending more rounds. See .claude/needs_human.json.`);
+      return "escalate";
+    }
     await runAgent("diagnostician",
       `The trusted check for "${m.id}" did not pass. A skeleton ticket with raw evidence is at ` +
       `.claude/rules/remediation_ticket.md. Read it, read verify/evidence.json if present, read the relevant logs and the ` +
@@ -299,6 +312,7 @@ async function main() {
     if (result === "night_over") process.exit(EXIT_NIGHT_OVER);
     if (result === "env_wedged") process.exit(3);
     if (result === "frontier") process.exit(5);
+    if (result === "escalate") process.exit(6);
     if (m.gate) {
       console.error(`\n◆ FEASIBILITY GATE ${m.id} FAILED after ${CONFIG.maxRounds} rounds. Stopping by design — ` +
         `resolve the unknown (or revise the plan) before any downstream work.`);

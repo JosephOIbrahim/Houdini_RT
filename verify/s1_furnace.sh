@@ -46,7 +46,7 @@ command -v "$PY" >/dev/null 2>&1 || { emit "binary-missing" ',"which":"python"';
 echo "== [1] build (MSVC via verify/s1_build.bat) ==" | tee -a "$BUILD_LOG"
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    cmd.exe //c "\"$(winpath "$ROOT/verify/s1_build.bat")\" \"$(winpath "$ROOT")\" \"$(winpath "$OPENPBR")\"" >>"$BUILD_LOG" 2>&1
+    MSYS_NO_PATHCONV=1 cmd.exe /c "$(winpath "$ROOT/verify/s1_build.bat")" "$(winpath "$ROOT")" "$(winpath "$OPENPBR")" >>"$BUILD_LOG" 2>&1
     RC=$? ;;
   *)
     # Non-Windows fallback for the cloud test bench (correctness only, never the real exam target).

@@ -50,7 +50,7 @@ if errorlevel 1 (
 REM --- host ------------------------------------------------------------------
 echo s1_build: cl furnace_host.cpp
 pushd "%OUT%"
-cl /nologo /std:c++17 /O2 /EHsc /bigobj /W3 /I"%VULKAN_SDK%\Include" /I"%OPENPBR%" "%ROOT%\src\furnace\furnace_host.cpp" /Fe:"%OUT%\furnace_host.exe" /Fo:"%OUT%\\" /link /LIBPATH:"%VULKAN_SDK%\Lib" vulkan-1.lib
+cl /nologo /std:c++17 /O2 /EHsc /bigobj /W3 /wd4305 /wd4996 /I"%VULKAN_SDK%\Include" /I"%OPENPBR%" "%ROOT%\src\furnace\furnace_host.cpp" /Fe:"%OUT%\furnace_host.exe" /Fo:"%OUT%\\" /link /LIBPATH:"%VULKAN_SDK%\Lib" vulkan-1.lib
 set "RC=%ERRORLEVEL%"
 popd
 if not "%RC%"=="0" (

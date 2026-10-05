@@ -1,0 +1,10 @@
+node_modules/
+build/
+.claude/worktrees/
+.claude/trusted_verify/
+.claude/state.json
+.claude/state.json.tmp
+verify/evidence.json
+verify/*.log
+STOP
+.claude/loop.pid

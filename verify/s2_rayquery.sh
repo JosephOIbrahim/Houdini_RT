@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# verify/s2_rayquery.sh — s2-rayquery trusted check. NOT YET AUTHORED.
+# The orchestrator treats exit 90 as "exam not authored" and switches to frontier mode:
+# the Drafter writes drafts/s2-rayquery.check.sh for human review. Review it, move it here, commit on
+# main, delete .claude/trusted_verify/ so the snapshot refreshes, then rerun.
+# Contract to satisfy: specs/build-spec.md §s2-rayquery.
+exit 90

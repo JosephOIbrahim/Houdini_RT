@@ -1,0 +1,144 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+
+// GPU white furnace for Adobe's OpenPBR BSDF (GLSL backend).
+//
+// Each invocation handles one (row, batch): it prepares the BSDF for that row's material and
+// view angle, draws `samples_per_batch` importance samples, and writes partial sums. The host
+// adds the batches up and judges each row. No ray queries, no Hydra: this is first-light step 1.
+//
+// LUT mode is chosen at compile time:
+//   default            embedded-array LUTs, no texture bindings (large SPIR-V)
+//   -DFURNACE_TEX_LUTS texture LUTs, bound at set 0 bindings 2 and 3 (the production mode)
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct Row
+{
+    float metalness;
+    float base_gray;
+    float specular_weight;
+    float coat;
+    float fuzz;
+    float roughness;
+    float cos_view;
+    uint seed;
+};
+
+struct Partial
+{
+    vec4 sums;   // sum of weight.r, weight.g, weight.b, and sum of (mean rgb)^2
+    vec4 stats;  // valid samples, sum of |weight - eval/pdf| / weight, sum of |pdf - pdf_eval| / pdf, pairs compared
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer Rows
+{
+    Row rows[];
+};
+
+layout(std430, set = 0, binding = 1) writeonly buffer Partials
+{
+    Partial partials[];
+};
+
+layout(push_constant) uniform Push
+{
+    uint row_count;
+    uint batches_per_row;
+    uint samples_per_batch;
+} pc;
+
+#ifdef FURNACE_TEX_LUTS
+layout(set = 0, binding = 2) uniform sampler2D openpbr_luts_2d[8];
+layout(set = 0, binding = 3) uniform sampler3D openpbr_luts_3d[8];
+#define OPENPBR_USE_TEXTURE_LUTS 1
+#define OPENPBR_SAMPLE_2D_TEXTURE(lut_id, uv) textureLod(openpbr_luts_2d[lut_id], uv, 0.0)
+#define OPENPBR_SAMPLE_3D_TEXTURE(lut_id, uvw) textureLod(openpbr_luts_3d[lut_id], uvw, 0.0)
+#endif
+
+#include "openpbr.h"
+
+// PCG hash. Independent of the CPU exam's generator on purpose: the two runs are compared
+// statistically, never sample by sample.
+uint pcg_next(inout uint state)
+{
+    state = state * 747796405u + 2891336453u;
+    const uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float rand01(inout uint state)
+{
+    return float(pcg_next(state) >> 8u) * (1.0 / 16777216.0);
+}
+
+void main()
+{
+    const uint index = gl_GlobalInvocationID.x;
+    if (index >= pc.row_count * pc.batches_per_row)
+    {
+        return;
+    }
+    const uint row_index = index / pc.batches_per_row;
+    const uint batch = index % pc.batches_per_row;
+    const Row row = rows[row_index];
+
+    OpenPBR_ResolvedInputs inputs = openpbr_make_default_resolved_inputs();
+    inputs.base_color = vec3(row.base_gray);
+    inputs.base_metalness = row.metalness;
+    inputs.specular_weight = row.specular_weight;
+    inputs.specular_roughness = row.roughness;
+    inputs.coat_weight = row.coat;
+    inputs.coat_color = vec3(1.0);
+    inputs.coat_roughness = row.roughness;
+    inputs.fuzz_weight = row.fuzz;
+    inputs.fuzz_color = vec3(1.0);
+
+    const float sin_view = sqrt(max(0.0, 1.0 - row.cos_view * row.cos_view));
+    const vec3 view_direction = normalize(vec3(sin_view, 0.0, row.cos_view));
+
+    const OpenPBR_PreparedBsdf prepared =
+        openpbr_prepare(inputs, vec3(1.0), OpenPBR_BaseRgbWavelengths_nm, OpenPBR_VacuumIor, view_direction);
+
+    uint state = row.seed ^ (batch * 0x9E3779B9u) ^ (row_index * 0x85EBCA6Bu);
+    pcg_next(state);
+
+    vec4 sums = vec4(0.0);
+    vec4 stats = vec4(0.0);
+
+    for (uint i = 0u; i < pc.samples_per_batch; ++i)
+    {
+        const float xi0 = rand01(state);
+        const float xi1 = rand01(state);
+        const float xi2 = rand01(state);
+
+        vec3 light_direction;
+        OpenPBR_DiffuseSpecular weight;
+        float pdf;
+        OpenPBR_BsdfLobeType lobe_type;
+        openpbr_sample(prepared, vec3(xi0, xi1, xi2), light_direction, weight, pdf, lobe_type);
+
+        if (pdf > 0.0)
+        {
+            const vec3 w = openpbr_get_sum_of_diffuse_specular(weight);
+            const float value = (w.r + w.g + w.b) / 3.0;
+            sums.rgb += w;
+            sums.a += value * value;
+            stats.x += 1.0;
+
+            const vec3 dir = normalize(light_direction);
+            const vec3 f_cos = openpbr_get_sum_of_diffuse_specular(openpbr_eval(prepared, dir));
+            const float pdf_eval = openpbr_pdf(prepared, dir);
+            if (pdf_eval > 0.0)
+            {
+                const float from_eval = (f_cos.r + f_cos.g + f_cos.b) / 3.0 / pdf_eval;
+                stats.y += abs(value - from_eval) / max(value, 1.0e-6);
+                stats.z += abs(pdf - pdf_eval) / pdf;
+                stats.w += 1.0;
+            }
+        }
+    }
+
+    partials[index].sums = sums;
+    partials[index].stats = stats;
+}

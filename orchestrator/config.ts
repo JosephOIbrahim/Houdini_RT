@@ -71,7 +71,7 @@ export const CONFIG = {
     { id: "s2-rayquery",       gate: true,  check: "verify/s2_rayquery.sh",   timeoutMs: 20 * 60_000,
       desc: "Same standalone program grows inline ray queries (GL_EXT_ray_query) against a static triangle scene with a BLAS/TLAS built on the host. Hit distance, occlusion and a closed-box furnace (L = E / (1 - rho)) match analytic references." },
     { id: "s3-delegate-shell", gate: true,  check: "verify/s3_delegate.sh",   timeoutMs: 30 * 60_000,
-      desc: "An HdRenderDelegate plugin registers in Houdini 22's hython, renders the kernel's image on an HdRenderThread, and a headless husk render writes an EXR whose pixels match the standalone kernel for the same seed." },
+      desc: "An HdRenderDelegate plugin (src/hdRT, CMake against the Houdini 22.0.429 HDK, installed to build/plugin_stage) registers hermetically as HoudiniRT, renders the step 2 closed-box furnace on an HdRenderThread with parameters from the RenderSettings prim, and a headless husk render writes a 256x256 EXR whose channel means match the analytic furnace value. The header of verify/s3_delegate.sh is the full contract." },
     { id: "s4-first-light",    gate: false, check: "verify/s4_firstlight.sh", timeoutMs: 30 * 60_000,
       desc: "Mesh and camera sync from Hydra (HdMeshUtil triangulation, Hd_SmoothNormals). The usd-wg Teapot under one dome light renders through the delegate and matches a Karma CPU reference within the FLIP tolerance. First light." },
   ],

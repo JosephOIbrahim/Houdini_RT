@@ -36,12 +36,12 @@ an independent reference the code under test cannot produce, evidence to
 
 ## s3-delegate-shell ◆GATE◆
 **Deliverable:** An HdRenderDelegate plugin for Houdini 22 renders the kernel's image on an HdRenderThread and husk writes it to an EXR.
-**Scripted acceptance** (`verify/s3_delegate.sh` — to be sealed):
-- Plugin builds against `%HFS%` (pinned version in the exam) and registers in a **hermetic hython** (ambient plugin paths masked; provenance asserted from `build/plugin_stage`) (11/12/15).
-- `husk --renderer HoudiniRT` on a minimal USD stage writes an EXR; OIIO reads it; the header carries the renderer name and the seed (15).
-- Pixel equivalence: the delegate's image for seed N matches the standalone kernel's image for seed N (mean abs diff < 1e-3 on a 256×256 constant-shading test) (16).
-- Pause/Resume: a scripted edit while rendering returns from Pause only after the render thread is idle (log markers in order) (17).
-- Validation silent (14).
+**Scripted acceptance** (`verify/s3_delegate.sh`, sealed 2026-10-06; its header is the full contract):
+- Plugin builds from `src/hdRT/CMakeLists.txt` against Houdini 22.0.429 (pinned in the exam), installs into `build/plugin_stage`, and registers in a **hermetic hython** as exactly one HdRendererPlugin with displayName `HoudiniRT`, discovered from `build/plugin_stage` only (11/12/13/15).
+- `husk -R <plugin id>` on the exam's stage writes a 256x256 EXR; OIIO reads it; `husk:render_stats` names the delegate, and the seed is echoed in the delegate log (and in the stats as `hrt_seed` when husk carries it) (15).
+- Pixel check: the image is the step 2 closed-box furnace with seed-chosen albedo, RGB emission and bounce count handed in through the RenderSettings prim. Each channel mean matches the analytic value `E * (1 - rho^(bounces+1)) / (1 - rho)` within 0.5% (16). Amended 2026-10-06: the earlier wording compared against a standalone kernel image, but no program produces one, and an analytic value is the more independent reference.
+- Pause/Resume: checked statically only (HdRenderThread in use; IsPauseSupported, Pause, Resume overridden; render thread start/stop markers in order) (17). Amended 2026-10-06: the only scripted driver, UsdImagingGL.Engine under hython, crashes without a GL context on the workstation. **Live pause must be checked by a human in the Solaris viewport before s4.**
+- Runs on the discrete GPU; validation layer proven active and silent (14/15). A staged `.spv` contains ray-query instructions (17).
 **Boundary:** Camera and mesh may be hardcoded test values; no real scene sync yet; viewport interactivity is not measured.
 
 ## s4-first-light

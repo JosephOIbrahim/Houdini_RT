@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# verify/m3_check.sh — NOT YET AUTHORED.
+# Author this trusted check per specs/build-spec.md §m3 BEFORE running m3.
+# The swarm takes exams; it never writes them. Exit 90 keeps the harness honest.
+echo "CHECK NOT YET AUTHORED: write m3_check.sh per specs/build-spec.md"
+exit 90

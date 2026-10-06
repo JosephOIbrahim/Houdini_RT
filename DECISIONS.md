@@ -24,3 +24,12 @@
 - The furnace uses uniform-hemisphere bounces (weight rho * 2 cos), an unbiased estimator with real variance. At rho = 0.8 expect a statistical exam failure roughly once per hundred runs; that is the 3 sigma test, not a bug.
 - The s2 exam disassembles `rayq.spv` with `spirv-dis` and fails (exit 11) if no ray-query instruction is present: the kernel must genuinely use inline ray queries — a compute-only fallback or a hand-rolled intersection pass does not count.
 - Host protocol the exam greps for (keep it in s3/s4 hosts too): a device line naming the GPU and its type, a `rayQuery: supported` line, and an echo of the injected seed (`seed N:`). Missing any of them is exit 15; a software device is rejected outright.
+- In GLSL an acceleration structure is declared `layout(binding = N) uniform accelerationStructureEXT name;`. The `uniform` qualifier is required.
+
+## 2026-10-05 (workstation facts, verified by listing the install)
+- Houdini 22 for s3 and s4: `C:/Program Files/Side Effects Software/Houdini 22.0.429` (HFS). `bin/hython.exe` and `bin/husk.exe` exist. Also installed: 22.0.417, 22.0.400, 22.0.397, 22.0.368, 21.0.773. Pin 22.0.429 in exams.
+- The HDK ships `toolkit/include/pxr/imaging/hd/renderThread.h`, `meshUtil.h`, `smoothNormals.h` and `renderDelegate.h` in 22.0.429. HdRenderThread, HdMeshUtil and Hd_SmoothNormals are available.
+- Exam authors: run every analytic reference function on one hand-checked case before proposing the exam. The first s2 draft had a reference that returned 0.0 for every ray and a byte scan that rejected correct shaders.
+
+## 2026-10-05 (references for s3)
+- `third_party/openusd_hdEmbree/` is Pixar's example Hydra delegate (TOST licence): the template for `src/hdRT/`. `third_party/fragment_m3_check/` shows a working hermetic-hython + HDK exam. Read each README first. Adapt, do not link.

@@ -1,0 +1,185 @@
+#version 460
+#extension GL_EXT_ray_query : require
+
+// furnace.comp - step 3 kernel: the closed-box furnace from step 2, seen through the Hydra camera.
+//
+// One dispatch adds one sample to every pixel: a camera ray, then a path that bounces around inside the
+// unit cube [0,1]^3. The walls are Lambertian with albedo rho and they all emit E (RGB).
+//
+// Estimator: bounces are COSINE-weighted about the inward wall normal, so each bounce multiplies the
+// throughput by exactly rho (BRDF rho/pi, times cos, over pdf cos/pi). With the first hit plus `bounces`
+// further bounces every path that stays in the box returns exactly
+//
+//     L = E * (1 + rho + rho^2 + ... + rho^bounces) = E * (1 - rho^(bounces+1)) / (1 - rho)
+//
+// which is the analytic value the step 3 exam checks. In a closed box this has zero variance, so the image
+// is constant. A ray that leaves the box ends its path and the pixel comes out darker: a leak cannot hide.
+// (Step 2 used uniform-hemisphere bounces with weight rho * 2 * cos. Same expectation, more noise.)
+//
+// The camera rays, the pixel grid and the per-pixel random streams are real: set HOUDINIRT_DEBUG_OPEN_FACE
+// to leave a wall out and the image stops being constant.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+
+// Mirrors FrameGpu in vkFurnace.cpp. The matrices arrive in GfMatrix4d memory order (row-major, row
+// vectors); read as a column-major mat4 that is the same transform for column vectors, so M * v is right.
+layout(std430, set = 0, binding = 1) readonly buffer Frame
+{
+    mat4 invView;        // camera space -> world space
+    mat4 invProj;        // normalised device coordinates -> camera space
+    vec4 emissionRho;    // rgb = wall emission, a = wall albedo
+    uvec4 size;          // width, height, bounces, seed
+    uvec4 pass;          // pass index, orthographic flag, unused, unused
+} frame;
+
+// One vec4 per pixel, row 0 at the bottom: rgb = summed radiance, a = number of camera rays that hit the box.
+layout(std430, set = 0, binding = 2) buffer Accum
+{
+    vec4 sum[];
+} accum;
+
+const float T_MAX = 1.0e4;
+const float PI = 3.14159265358979;
+
+uint pcg_next(inout uint state)
+{
+    state = state * 747796405u + 2891336453u;
+    const uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// murmur3 finaliser: a full-avalanche 32-bit mix
+uint mix32(uint h)
+{
+    h ^= h >> 16u;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13u;
+    h *= 0xC2B2AE35u;
+    h ^= h >> 16u;
+    return h;
+}
+
+float rand01(inout uint state)
+{
+    return float(pcg_next(state) >> 8u) * (1.0 / 16777216.0);
+}
+
+// Closest hit along `direction` (unit length here). On a hit it returns the distance and which wall was
+// hit: the cube is 12 triangles, two per wall, in the order vkFurnace.cpp builds them.
+bool closest_hit(vec3 origin, vec3 direction, out float t, out int wall)
+{
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, origin, 0.0, direction, T_MAX);
+    while (rayQueryProceedEXT(rq)) {}
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        t = rayQueryGetIntersectionTEXT(rq, true);
+        wall = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true) / 2;
+        return true;
+    }
+    t = -1.0;
+    wall = -1;
+    return false;
+}
+
+// Inward normals of the six walls, in build order: z=0, z=1, y=0, y=1, x=0, x=1.
+const vec3 WALL_NORMAL[6] = vec3[6](vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0),
+                                    vec3(0.0, -1.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0));
+
+// How far inside the box every bounce starts. The normal comes from the triangle that was hit, never
+// from the hit position, and the next origin is pulled this far inside every wall. A path that starts
+// strictly inside a closed convex box and heads away from the wall it left cannot escape, so the kernel
+// needs no minimum ray distance and has no way to leak through an edge on rounding error.
+const float INSET = 1.0e-4;
+
+// A direction about the unit normal n with density cos(theta) / pi.
+vec3 cosine_hemisphere(vec3 n, inout uint rng)
+{
+    const float u1 = rand01(rng);
+    const float u2 = rand01(rng);
+    const float r = sqrt(u1);
+    const float phi = 2.0 * PI * u2;
+    const vec3 helper = abs(n.x) > 0.5 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    const vec3 t = normalize(cross(helper, n));
+    const vec3 b = cross(n, t);
+    return normalize(r * cos(phi) * t + r * sin(phi) * b + sqrt(max(0.0, 1.0 - u1)) * n);
+}
+
+// Returns the number of wall hits weighted by throughput, 1 + rho + rho^2 + ..., and whether the camera
+// ray itself hit the box. Multiply by E for radiance.
+float furnace_path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
+{
+    const float rho = frame.emissionRho.a;
+    const uint budget = frame.size.z;
+
+    float throughput = 1.0;
+    float gathered = 0.0;
+    covered = false;
+
+    for (uint bounce = 0u; bounce <= budget; ++bounce)
+    {
+        float t;
+        int wall;
+        if (!closest_hit(origin, direction, t, wall))
+        {
+            break;   // a leak out of the box: the path ends and the estimate drops
+        }
+        if (bounce == 0u)
+        {
+            covered = true;
+        }
+        gathered += throughput;
+        if (bounce == budget)
+        {
+            break;
+        }
+        throughput *= rho;
+        origin = clamp(origin + t * direction, vec3(INSET), vec3(1.0 - INSET));
+        direction = cosine_hemisphere(WALL_NORMAL[wall], rng);
+    }
+    return gathered;
+}
+
+void main()
+{
+    const uvec2 pixel = gl_GlobalInvocationID.xy;
+    const uint width = frame.size.x;
+    const uint height = frame.size.y;
+    if (pixel.x >= width || pixel.y >= height)
+    {
+        return;
+    }
+    const uint index = pixel.y * width + pixel.x;
+
+    // One decorrelated stream per pixel per pass: hash the path number, mix in the seed, hash again.
+    const uint path_number = frame.pass.x * (width * height) + index;
+    uint rng = mix32(frame.size.w + mix32(path_number + 0x9E3779B9u));
+
+    // Pixel -> normalised device coordinates. Row 0 is the bottom of the image (y = -1).
+    const vec2 jitter = vec2(rand01(rng), rand01(rng));
+    const vec2 ndc = 2.0 * ((vec2(pixel) + jitter) / vec2(float(width), float(height))) - 1.0;
+
+    // Un-project the pixel onto the near plane, then into the world.
+    const vec4 near_h = frame.invProj * vec4(ndc, -1.0, 1.0);
+    const vec3 near_point = near_h.xyz / near_h.w;
+    vec3 origin;
+    vec3 direction;
+    if (frame.pass.y != 0u)
+    {
+        // orthographic: parallel rays leave the near plane
+        origin = (frame.invView * vec4(near_point, 1.0)).xyz;
+        direction = normalize((frame.invView * vec4(0.0, 0.0, -1.0, 0.0)).xyz);
+    }
+    else
+    {
+        // perspective: rays leave the eye through the near plane
+        origin = (frame.invView * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        direction = normalize((frame.invView * vec4(near_point, 0.0)).xyz);
+    }
+
+    bool covered;
+    const float gathered = furnace_path(origin, direction, rng, covered);
+    accum.sum[index] += vec4(frame.emissionRho.rgb * gathered, covered ? 1.0 : 0.0);
+}

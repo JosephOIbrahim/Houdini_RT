@@ -2,6 +2,10 @@
 # verify/s3_delegate.sh - exam for s3-delegate-shell.
 # Authored by Claude at Joe's request on 2026-10-06, replacing the truncated draft sealed on 10-05.
 # Every Houdini fact below was probed on this workstation against Houdini 22.0.429.
+# Amended 2026-10-06, stage [7] only: husk packs render stats into "husk:render_stats" only for a
+# delegate that has a UsdRenderers.json entry (Karma). For any other delegate it writes "__delegate"
+# and each stat as top-level EXR attributes (probed with SideFX's HdHDebug in this exam's own hermetic
+# environment). The first version demanded the Karma form, which no new delegate can produce here.
 #
 # Called by the orchestrator as: s3_delegate.sh <SEED>   (fresh 64-bit nonce per run)
 # Contract: specs/build-spec.md, section s3-delegate-shell.
@@ -44,8 +48,11 @@
 #         HoudiniRT: render thread stop
 #     The validation layer must be enabled when HOUDINIRT_VALIDATION=1 (the exam sets it).
 #   - GetRenderStats() should return hrt_seed (int). husk copies delegate stats into the EXR
-#     attribute husk:render_stats (observed for Karma). If it is absent the exam warns and
-#     relies on the log line; if it is present it must equal the seed.
+#     header: packed into the attribute husk:render_stats for a delegate with a UsdRenderers.json
+#     entry (observed for Karma), as top-level attributes beside __delegate for any other
+#     (observed for HdHDebug). Either way the header must name this plugin as the delegate.
+#     If hrt_seed is absent the exam warns and relies on the log line; if it is present it must
+#     equal the seed.
 #
 # SOURCE INVARIANTS (static; see the honest limit below)
 #   - src/hdRT uses HdRenderThread, and the delegate overrides IsPauseSupported, Pause, Resume.
@@ -274,20 +281,32 @@ if (spec.width, spec.height) != (256, 256):
     fail("resolution is %dx%d, expected 256x256" % (spec.width, spec.height))
 if spec.nchannels < 3:
     fail("fewer than three channels")
+# husk records which delegate rendered the image, and that delegate's render stats, in one of two
+# places: packed as JSON in "husk:render_stats" (delegates with a UsdRenderers.json entry, e.g. Karma),
+# or as top-level attributes "__delegate" plus one attribute per stat (every other delegate).
 stats_raw = spec.getattribute("husk:render_stats")
 header_seed = "absent"
 if stats_raw:
     stats = json.loads(stats_raw)
-    if stats.get("__delegate") != plugin_id:
-        fail("husk:render_stats names delegate %r, expected %r" % (stats.get("__delegate"), plugin_id))
-    if "hrt_seed" in stats:
-        if int(stats["hrt_seed"]) != int(cfg["seed"]):
-            fail("header hrt_seed %r does not equal the seed %r" % (stats["hrt_seed"], cfg["seed"]))
-        header_seed = "match"
+    where = "husk:render_stats"
 else:
-    fail("the EXR has no husk:render_stats attribute (was it written by husk?)")
+    stats = {}
+    for key in ("__delegate", "hrt_seed"):
+        value = spec.getattribute(key)
+        if value is not None:
+            stats[key] = value
+    where = "the EXR header"
+print("judge: delegate and stats read from %s" % where)
+if "__delegate" not in stats:
+    fail("the EXR names no delegate: neither husk:render_stats nor __delegate is in its header (was it written by husk?)")
+if stats.get("__delegate") != plugin_id:
+    fail("%s names delegate %r, expected %r" % (where, stats.get("__delegate"), plugin_id))
+if "hrt_seed" in stats:
+    if int(stats["hrt_seed"]) != int(cfg["seed"]):
+        fail("header hrt_seed %r does not equal the seed %r" % (stats["hrt_seed"], cfg["seed"]))
+    header_seed = "match"
 if header_seed == "absent":
-    print("judge WARN: hrt_seed is not in husk:render_stats; relying on the delegate log line")
+    print("judge WARN: hrt_seed is not in the EXR header; relying on the delegate log line")
 px = np.asarray(inp.read_image("float"), dtype=np.float64).reshape(spec.height, spec.width, spec.nchannels)
 inp.close()
 rgb = px[:, :, :3]

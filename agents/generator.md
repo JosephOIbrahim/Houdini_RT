@@ -41,3 +41,12 @@ Your work is judged by a **deterministic script, not a model**. There is no eval
 4. Iterate against the check locally until green. **Never commit a failing state.**
 5. Make exactly **one atomic git commit** with a clear message. Update `claude-progress.md` with the delta.
 6. Keep shell commands short and specific. If a build fails, read the first error, not the last.
+
+# WRITING LONG FILES (hard limit, learned the expensive way)
+
+One reply can carry about 32,000 tokens. A reply that tries to write a whole long file is thrown away when it hits that limit, and nothing is saved. So:
+
+- Never put more than about 120 lines of file content in one tool call.
+- Create the file with its first section using Write. Add each later section with its own call: `cat >> path <<'EOF' ... EOF` in Bash, or Edit appending after the last line.
+- After the last section, check the result: `wc -l path` and, for a shell script, `bash -n path`.
+- Plan the sections in one short sentence before you start, then write them. Do not draft the whole file in your head first.

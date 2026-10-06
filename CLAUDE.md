@@ -45,6 +45,7 @@ s4 mesh + camera sync (first light). `specs/build-spec.md` holds the acceptance 
 - `DECISIONS.md` — durable lessons, dated. `claude-progress.md` — what is done and the current delta.
 
 ## Agent invariants
+- **Long files are written in sections.** Never more than about 120 lines of file content in one tool call; create the file, then append section by section. A single oversized reply is discarded whole.
 - **WIP = 1.** One milestone per Generator run. Adjacent ideas → one line in `claude-progress.md`.
 - One **atomic commit** per sprint; update `claude-progress.md` with the delta.
 - Repair mode fixes **only** the ticket. No unrelated files.

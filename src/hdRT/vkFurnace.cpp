@@ -10,6 +10,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -95,7 +96,7 @@ struct FrameGpu
 {
     float invView[16];
     float invProj[16];
-    float emissionRho[4];   // rgb emission, a = albedo
+    float dome[4];          // rgb dome radiance, a unused
     uint32_t size[4];       // width, height, bounces, seed
     uint32_t pass[4];       // pass index, orthographic flag, unused, unused
 };
@@ -124,9 +125,13 @@ struct HdRTVkFurnace::Impl
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     AsApi as;
     VkDeviceSize scratchAlignment = 1;
+    uint64_t maxPrimitiveCount = 0;        // VkPhysicalDeviceAccelerationStructurePropertiesKHR
+    uint32_t maxStorageBufferRange = 0;    // VkPhysicalDeviceLimits
 
-    Buffer cubeVb, cubeIb, instanceBuffer;
-    Accel cubeBlas, tlas;
+    // The scene: one world-space mesh (SetScene). Positions double as the BLAS build input.
+    Buffer sceneVb, sceneNb, sceneIb, sceneAlbedo, instanceBuffer;
+    Accel blas, tlas;
+    bool hasScene = false;
 
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
@@ -150,7 +155,10 @@ struct HdRTVkFurnace::Impl
                                                  const VkDebugUtilsMessengerCallbackDataEXT* data, void* user);
 
     uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags wanted) const;
-    bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads = false);
+    // gpuReads: the kernel reads it on every hit; prefer device-local memory the host can write when its
+    // heap is large (resizable BAR), else host memory.
+    bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads = false,
+                      bool gpuReads = false);
     void DestroyBuffer(Buffer& b);
     VkDeviceAddress BufferAddress(VkBuffer buffer) const;
     bool Submit(std::string* error);
@@ -160,7 +168,9 @@ struct HdRTVkFurnace::Impl
 
     bool CreateInstance(bool wantValidation, std::string* error);
     bool CreateDevice(bool allowSoftwareDevice, std::string* error);
-    bool CreateScene(int openFace, std::string* error);
+    bool BuildScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
+                    const float* albedo, size_t triangleCount, std::string* error);
+    void DestroyScene();
     bool CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error);
     void Destroy();
 };
@@ -202,7 +212,8 @@ uint32_t HdRTVkFurnace::Impl::FindMemoryType(uint32_t typeBits, VkMemoryProperty
 
 // cpuReads: the CPU reads this buffer back, so ask for cached host memory. Plain host-visible memory on a
 // discrete GPU is usually write-combined, and reading that is tens of times slower than normal memory.
-bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads)
+bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads,
+                                       bool gpuReads)
 {
     Buffer b;
     b.size = size;
@@ -220,16 +231,39 @@ bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usa
     VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
     ai.allocationSize = req.size;
     const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    ai.memoryTypeIndex = UINT32_MAX;
-    if (hostVisible && cpuReads)
-        ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-    if (ai.memoryTypeIndex == UINT32_MAX)
-        ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostVisible ? hostFlags : VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
-    if (ai.memoryTypeIndex == UINT32_MAX)
-        return _Fail(error, "no suitable memory type for a buffer");
     if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         ai.pNext = &flags;
-    HDRT_VK(vkAllocateMemory(device, &ai, nullptr, &out->memory));
+
+    // gpuReads: try device-local memory the host can write, but only on a heap large enough that this
+    // buffer is a small share of it. Without resizable BAR that heap is about 256 MB and shared with the
+    // driver and Houdini's viewport, so it is skipped; and if the allocation fails anyway, fall back.
+    if (hostVisible && gpuReads)
+    {
+        const uint32_t t = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (t != UINT32_MAX)
+        {
+            VkPhysicalDeviceMemoryProperties mp;
+            vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+            const VkDeviceSize heap = mp.memoryHeaps[mp.memoryTypes[t].heapIndex].size;
+            if (heap > (VkDeviceSize(1) << 30) && req.size * 8 <= heap)
+            {
+                ai.memoryTypeIndex = t;
+                if (vkAllocateMemory(device, &ai, nullptr, &out->memory) != VK_SUCCESS)
+                    out->memory = VK_NULL_HANDLE;   // full or refused: host memory below
+            }
+        }
+    }
+    if (!out->memory)
+    {
+        ai.memoryTypeIndex = UINT32_MAX;
+        if (hostVisible && cpuReads)
+            ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+        if (ai.memoryTypeIndex == UINT32_MAX)
+            ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostVisible ? hostFlags : VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+        if (ai.memoryTypeIndex == UINT32_MAX)
+            return _Fail(error, "no suitable memory type for a buffer");
+        HDRT_VK(vkAllocateMemory(device, &ai, nullptr, &out->memory));
+    }
     HDRT_VK(vkBindBufferMemory(device, out->buffer, out->memory, 0));
     if (hostVisible)
         HDRT_VK(vkMapMemory(device, out->memory, 0, VK_WHOLE_SIZE, 0, &out->mapped));
@@ -458,6 +492,8 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     props2.pNext = &asProps;
     vkGetPhysicalDeviceProperties2(phys, &props2);
     scratchAlignment = asProps.minAccelerationStructureScratchOffsetAlignment;
+    maxPrimitiveCount = asProps.maxPrimitiveCount;
+    maxStorageBufferRange = props2.properties.limits.maxStorageBufferRange;
 
     uint32_t familyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &familyCount, nullptr);
@@ -519,52 +555,73 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     return true;
 }
 
-// ---- scene: the unit cube [0,1]^3, one bottom-level structure, one instance ------------------------
+// ---- scene: one world-space mesh, one bottom-level structure, one identity instance -----------------
 
-bool HdRTVkFurnace::Impl::CreateScene(int openFace, std::string* error)
+void HdRTVkFurnace::Impl::DestroyScene()
 {
-    // 8 corners, 12 triangles. Winding is irrelevant: culling is disabled on the instance. The wall order
-    // here is the order WALL_NORMAL is written in, in shaders/furnace.comp.
-    const std::vector<float> positions = { 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1 };
-    const uint32_t faces[6][6] = { { 0, 1, 2, 0, 2, 3 },     // face 0: z = 0
-                                   { 4, 6, 5, 4, 7, 6 },     // face 1: z = 1
-                                   { 0, 5, 1, 0, 4, 5 },     // face 2: y = 0
-                                   { 3, 2, 6, 3, 6, 7 },     // face 3: y = 1
-                                   { 0, 3, 7, 0, 7, 4 },     // face 4: x = 0
-                                   { 1, 5, 6, 1, 6, 2 } };   // face 5: x = 1
-    // Always 12 triangles, two per wall, so the shader can tell the wall from the primitive index. A wall
-    // that is left out keeps its two slots as degenerate triangles, which no ray can hit.
-    std::vector<uint32_t> indices;
-    for (int f = 0; f < 6; ++f)
-    {
-        if (f != openFace)
-            indices.insert(indices.end(), faces[f], faces[f] + 6);
-        else
-            indices.insert(indices.end(), 6, 0u);
-    }
+    hasScene = false;
+    if (device && queue)
+        vkQueueWaitIdle(queue);   // nothing may still be reading the old buffers
+    DestroyAccel(tlas);
+    DestroyBuffer(instanceBuffer);
+    DestroyAccel(blas);
+    DestroyBuffer(sceneVb);
+    DestroyBuffer(sceneNb);
+    DestroyBuffer(sceneIb);
+    DestroyBuffer(sceneAlbedo);
+}
 
+bool HdRTVkFurnace::Impl::BuildScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
+                                     const float* albedo, size_t triangleCount, std::string* error)
+{
+    DestroyScene();
+    if (triangleCount == 0 || vertexCount == 0)
+        return true;   // no geometry: no scene, every pass renders black with alpha 0
+    // The shader indexes 3 floats per vertex and 3 indices per triangle in 32-bit arithmetic.
+    if (vertexCount > size_t(UINT32_MAX) / 3 || triangleCount > size_t(UINT32_MAX) / 3)
+        return _Fail(error, "the scene is too large for 32-bit indexing in the kernel");
+    if (maxPrimitiveCount && uint64_t(triangleCount) > maxPrimitiveCount)
+        return _Fail(error, "the scene has more triangles than this device allows in one acceleration structure");
+
+    // Positions are a build input and a storage buffer (the shader interpolates the hit point from them);
+    // the rest are storage buffers only. Written once per edit from the host; placed in device-local memory
+    // the host can write when that heap is large (resizable BAR), else in host memory (see CreateBuffer).
     const VkBufferUsageFlags inputUsage =
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    if (!CreateBuffer(positions.size() * sizeof(float), inputUsage, true, &cubeVb, error))
+    const VkBufferUsageFlags geomUsage = inputUsage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    const VkDeviceSize vbBytes = VkDeviceSize(vertexCount) * 3 * sizeof(float);
+    const VkDeviceSize ibBytes = VkDeviceSize(triangleCount) * 3 * sizeof(uint32_t);
+    const VkDeviceSize abBytes = VkDeviceSize(triangleCount) * 4 * sizeof(float);
+    if (maxStorageBufferRange && std::max(std::max(vbBytes, ibBytes), abBytes) > VkDeviceSize(maxStorageBufferRange))
+        return _Fail(error, "a scene buffer is larger than this device's maxStorageBufferRange");
+    if (!CreateBuffer(vbBytes, geomUsage, true, &sceneVb, error, false, true))
         return false;
-    if (!CreateBuffer(indices.size() * sizeof(uint32_t), inputUsage, true, &cubeIb, error))
+    if (!CreateBuffer(vbBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneNb, error, false, true))
         return false;
-    std::memcpy(cubeVb.mapped, positions.data(), positions.size() * sizeof(float));
-    std::memcpy(cubeIb.mapped, indices.data(), indices.size() * sizeof(uint32_t));
+    if (!CreateBuffer(ibBytes, geomUsage, true, &sceneIb, error, false, true))
+        return false;
+    if (!CreateBuffer(abBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneAlbedo, error, false, true))
+        return false;
+    std::memcpy(sceneVb.mapped, positions, size_t(vbBytes));
+    std::memcpy(sceneNb.mapped, normals, size_t(vbBytes));
+    std::memcpy(sceneIb.mapped, indices, size_t(ibBytes));
+    std::memcpy(sceneAlbedo.mapped, albedo, size_t(abBytes));
 
     VkAccelerationStructureGeometryKHR geometry = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
     geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
     geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
     geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    geometry.geometry.triangles.vertexData.deviceAddress = BufferAddress(cubeVb.buffer);
+    geometry.geometry.triangles.vertexData.deviceAddress = BufferAddress(sceneVb.buffer);
     geometry.geometry.triangles.vertexStride = 3 * sizeof(float);
-    geometry.geometry.triangles.maxVertex = uint32_t(positions.size() / 3) - 1;
+    geometry.geometry.triangles.maxVertex = uint32_t(vertexCount - 1);
     geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
-    geometry.geometry.triangles.indexData.deviceAddress = BufferAddress(cubeIb.buffer);
-    if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry, uint32_t(indices.size() / 3), &cubeBlas, error))
+    geometry.geometry.triangles.indexData.deviceAddress = BufferAddress(sceneIb.buffer);
+    if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry, uint32_t(triangleCount), &blas, error))
         return false;
 
+    // One instance, identity transform: the render pass already applied every mesh transform.
+    // Back faces are hit like front faces (Karma shades and shadows them the same).
     VkAccelerationStructureInstanceKHR instanceData = {};
     instanceData.transform.matrix[0][0] = 1.0f;
     instanceData.transform.matrix[1][1] = 1.0f;
@@ -573,7 +630,7 @@ bool HdRTVkFurnace::Impl::CreateScene(int openFace, std::string* error)
     instanceData.mask = 0xFF;
     instanceData.instanceShaderBindingTableRecordOffset = 0;
     instanceData.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    instanceData.accelerationStructureReference = cubeBlas.address;
+    instanceData.accelerationStructureReference = blas.address;
     if (!CreateBuffer(sizeof(instanceData), inputUsage, true, &instanceBuffer, error))
         return false;
     std::memcpy(instanceBuffer.mapped, &instanceData, sizeof(instanceData));
@@ -584,28 +641,50 @@ bool HdRTVkFurnace::Impl::CreateScene(int openFace, std::string* error)
     tlasGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
     tlasGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
     tlasGeometry.geometry.instances.data.deviceAddress = BufferAddress(instanceBuffer.buffer);
-    return BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, tlasGeometry, 1, &tlas, error);
+    if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, tlasGeometry, 1, &tlas, error))
+        return false;
+
+    // Point bindings 0 and 3..6 at the new scene. The queue is idle (BuildAccel waits), so no pass uses them.
+    VkWriteDescriptorSetAccelerationStructureKHR asWrite = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
+    asWrite.accelerationStructureCount = 1;
+    asWrite.pAccelerationStructures = &tlas.handle;
+    const VkDescriptorBufferInfo infos[4] = { { sceneVb.buffer, 0, VK_WHOLE_SIZE }, { sceneNb.buffer, 0, VK_WHOLE_SIZE },
+                                              { sceneIb.buffer, 0, VK_WHOLE_SIZE }, { sceneAlbedo.buffer, 0, VK_WHOLE_SIZE } };
+    VkWriteDescriptorSet writes[5] = {};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = descriptorSet;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    writes[0].pNext = &asWrite;
+    for (uint32_t k = 0; k < 4; ++k)
+    {
+        writes[k + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[k + 1].dstSet = descriptorSet;
+        writes[k + 1].dstBinding = 3 + k;
+        writes[k + 1].descriptorCount = 1;
+        writes[k + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[k + 1].pBufferInfo = &infos[k];
+    }
+    vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
+    hasScene = true;
+    return true;
 }
 
-// ---- pipeline: one compute shader, three bindings ---------------------------------------------------
+// ---- pipeline: one compute shader, seven bindings (0 tlas, 1 frame, 2 accumulation, 3-6 the scene) ---------------------------------------------------
 
 bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error)
 {
-    VkDescriptorSetLayoutBinding bindings[3] = {};
-    bindings[0].binding = 0;
-    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    bindings[0].descriptorCount = 1;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[1].binding = 1;
-    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[1].descriptorCount = 1;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-    bindings[2].binding = 2;
-    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    bindings[2].descriptorCount = 1;
-    bindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutBinding bindings[7] = {};
+    for (uint32_t k = 0; k < 7; ++k)
+    {
+        bindings[k].binding = k;
+        bindings[k].descriptorType = (k == 0) ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[k].descriptorCount = 1;
+        bindings[k].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
     VkDescriptorSetLayoutCreateInfo dslci = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    dslci.bindingCount = 3;
+    dslci.bindingCount = 7;
     dslci.pBindings = bindings;
     HDRT_VK(vkCreateDescriptorSetLayout(device, &dslci, nullptr, &setLayout));
 
@@ -627,7 +706,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     pci.layout = pipelineLayout;
     HDRT_VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline));
 
-    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 } };
+    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 } };
     VkDescriptorPoolCreateInfo dpci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -644,24 +723,16 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
         return false;
     std::memset(frameBuffer.mapped, 0, sizeof(FrameGpu));
 
-    VkWriteDescriptorSetAccelerationStructureKHR asWrite = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
-    asWrite.accelerationStructureCount = 1;
-    asWrite.pAccelerationStructures = &tlas.handle;
+    // Binding 1 now; binding 2 in BeginFrame; bindings 0 and 3..6 in BuildScene. No pass is dispatched
+    // before all seven are written (RenderPass skips the dispatch while there is no scene).
     VkDescriptorBufferInfo frameInfo = { frameBuffer.buffer, 0, VK_WHOLE_SIZE };
-    VkWriteDescriptorSet writes[2] = {};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = descriptorSet;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    writes[0].pNext = &asWrite;
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = descriptorSet;
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    writes[1].pBufferInfo = &frameInfo;
-    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = descriptorSet;
+    write.dstBinding = 1;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &frameInfo;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     return true;
 }
 
@@ -685,11 +756,7 @@ void HdRTVkFurnace::Impl::Destroy()
             vkDestroyDescriptorSetLayout(device, setLayout, nullptr);
         DestroyBuffer(frameBuffer);
         DestroyBuffer(accumBuffer);
-        DestroyAccel(tlas);
-        DestroyBuffer(instanceBuffer);
-        DestroyAccel(cubeBlas);
-        DestroyBuffer(cubeVb);
-        DestroyBuffer(cubeIb);
+        DestroyScene();
         if (pool)
             vkDestroyCommandPool(device, pool, nullptr);                // frees the command buffer with it
         vkDestroyDevice(device, nullptr);
@@ -721,11 +788,14 @@ void HdRTVkFurnace::Impl::Destroy()
     as = AsApi();
     frameBuffer = Buffer();
     accumBuffer = Buffer();
-    cubeVb = Buffer();
-    cubeIb = Buffer();
+    sceneVb = Buffer();
+    sceneNb = Buffer();
+    sceneIb = Buffer();
+    sceneAlbedo = Buffer();
     instanceBuffer = Buffer();
-    cubeBlas = Accel();
+    blas = Accel();
     tlas = Accel();
+    hasScene = false;
     width = 0;
     height = 0;
     validationActive = false;
@@ -759,7 +829,7 @@ bool HdRTVkFurnace::Init(const HdRTVkOptions& options, std::string* error)
 
     Impl& d = *_impl;
     const bool ok = d.CreateInstance(options.validation, error) && d.CreateDevice(options.allowSoftwareDevice, error) &&
-                    d.CreateScene(options.openFace, error) && d.CreatePipeline(spirv, error);
+                    d.CreatePipeline(spirv, error);
     if (!ok)
     {
         const std::string name = d.deviceName;
@@ -774,6 +844,20 @@ bool HdRTVkFurnace::Init(const HdRTVkOptions& options, std::string* error)
 bool HdRTVkFurnace::IsReady() const
 {
     return _impl->ready;
+}
+
+bool HdRTVkFurnace::SetScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
+                             const float* albedo, size_t triangleCount, std::string* error)
+{
+    Impl& d = *_impl;
+    if (!d.ready)
+        return _Fail(error, "SetScene called before a successful Init");
+    return d.BuildScene(positions, normals, vertexCount, indices, albedo, triangleCount, error);
+}
+
+bool HdRTVkFurnace::HasScene() const
+{
+    return _impl->hasScene;
 }
 
 bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
@@ -791,6 +875,8 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
         d.width = 0;
         d.height = 0;
         const VkDeviceSize bytes = VkDeviceSize(frame.width) * frame.height * 4 * sizeof(float);
+        if (d.maxStorageBufferRange && bytes > VkDeviceSize(d.maxStorageBufferRange))
+            return _Fail(error, "the image is larger than this device's maxStorageBufferRange allows");
         if (!d.CreateBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &d.accumBuffer, error, /*cpuReads=*/true))
             return false;
         d.width = frame.width;
@@ -810,10 +896,10 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
     FrameGpu gpu = {};
     std::memcpy(gpu.invView, frame.invView, sizeof(gpu.invView));
     std::memcpy(gpu.invProj, frame.invProj, sizeof(gpu.invProj));
-    gpu.emissionRho[0] = frame.emission[0];
-    gpu.emissionRho[1] = frame.emission[1];
-    gpu.emissionRho[2] = frame.emission[2];
-    gpu.emissionRho[3] = frame.rho;
+    gpu.dome[0] = frame.dome[0];
+    gpu.dome[1] = frame.dome[1];
+    gpu.dome[2] = frame.dome[2];
+    gpu.dome[3] = 0.0f;
     gpu.size[0] = frame.width;
     gpu.size[1] = frame.height;
     gpu.size[2] = frame.bounces;
@@ -829,6 +915,10 @@ bool HdRTVkFurnace::RenderPass(uint32_t passIndex, std::string* error)
     Impl& d = *_impl;
     if (!d.ready || !d.accumBuffer.buffer)
         return _Fail(error, "RenderPass called before BeginFrame");
+
+    // No scene: every camera ray misses, so the accumulation (zeroed in BeginFrame) is already the answer.
+    if (!d.hasScene)
+        return true;
 
     static_cast<FrameGpu*>(d.frameBuffer.mapped)->pass[0] = passIndex;
 

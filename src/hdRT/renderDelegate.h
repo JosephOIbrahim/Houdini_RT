@@ -5,8 +5,8 @@
 // https://openusd.org/license.
 //
 // Modified for HoudiniRT (2026): adapted from OpenUSD 26.03,
-// pxr/imaging/plugin/hdEmbree/renderDelegate.h. Embree, meshes, lights and instancers are removed;
-// the renderer is this project's Vulkan furnace. See NOTICE.md in this directory.
+// pxr/imaging/plugin/hdEmbree/renderDelegate.h. Embree, instancers and every light but the dome are
+// removed; meshes and the dome are this project's HdRTMesh and HdRTLight; the renderer is its own Vulkan tracer. See NOTICE.md in this directory.
 //
 #ifndef HDRT_RENDER_DELEGATE_H
 #define HDRT_RENDER_DELEGATE_H
@@ -16,6 +16,7 @@
 #include "pxr/imaging/hd/renderThread.h"
 
 #include "renderer.h"
+#include "scene.h"
 #include "settings.h"
 
 #include <atomic>
@@ -67,6 +68,9 @@ public:
     /// The furnace parameters as of now: delivered render settings first, then the config file named by
     /// HOUDINIRT_S3_CONFIG, then defaults. Called by the render pass on the app thread.
     HdRTFurnaceConfig ResolveFurnaceConfig() const;
+
+    /// The CPU-side scene that meshes and lights publish into. The render pass snapshots it in Execute().
+    HdRTScene const& GetScene() const { return _scene; }
 
     VtDictionary GetRenderStats() const override;
 
@@ -135,6 +139,10 @@ private:
 
     // A version counter for edits to anything the render thread reads or writes.
     std::atomic<int> _sceneVersion;
+
+    // Meshes and lights as Hydra delivered them (CPU side). Declared before the render param, which
+    // points at it, and before the render thread, which is stopped before anything here is destroyed.
+    HdRTScene _scene;
 
     // Passed to prims during Sync(); stops the render thread before an edit.
     std::shared_ptr<HdRTRenderParam> _renderParam;

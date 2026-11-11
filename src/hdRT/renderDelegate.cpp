@@ -5,12 +5,14 @@
 // https://openusd.org/license.
 //
 // Modified for HoudiniRT (2026): adapted from OpenUSD 26.03,
-// pxr/imaging/plugin/hdEmbree/renderDelegate.cpp. Embree, meshes, lights and instancers are removed;
-// the renderer is this project's Vulkan furnace. See NOTICE.md in this directory.
+// pxr/imaging/plugin/hdEmbree/renderDelegate.cpp. Embree, instancers and every light but the dome are
+// removed; meshes and the dome are this project's HdRTMesh and HdRTLight; the renderer is its own Vulkan tracer. See NOTICE.md in this directory.
 //
 #include "renderDelegate.h"
 
+#include "light.h"
 #include "log.h"
+#include "mesh.h"
 #include "renderBuffer.h"
 #include "renderParam.h"
 #include "renderPass.h"
@@ -32,14 +34,17 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-// Step 3 draws a built-in scene, so no rprim types yet. Meshes are added in step 4.
+// Step 4: polygon meshes.
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_RPRIM_TYPES =
 {
+    HdPrimTypeTokens->mesh,
 };
 
+// Step 4: the camera and an untextured dome light.
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_SPRIM_TYPES =
 {
     HdPrimTypeTokens->camera,
+    HdPrimTypeTokens->domeLight,
 };
 
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_BPRIM_TYPES =
@@ -88,17 +93,13 @@ HdRTRenderDelegate::_Initialize()
 {
     // What a settings panel can show. The defaults are deliberately not written into the settings map:
     // ResolveFurnaceConfig() needs to know which values the application really set.
-    _settingDescriptors.resize(5);
+    _settingDescriptors.resize(3);
     _settingDescriptors[0] = { "Samples Per Pixel",
         HdRTRenderSettingsTokens->spp, VtValue(int(HdRTFurnaceConfig().spp)) };
     _settingDescriptors[1] = { "Random Number Seed",
         HdRTRenderSettingsTokens->seed, VtValue(int(HdRTFurnaceConfig().seed)) };
-    _settingDescriptors[2] = { "Furnace: Wall Albedo",
-        HdRTRenderSettingsTokens->furnaceRho, VtValue(float(HdRTFurnaceConfig().rho)) };
-    _settingDescriptors[3] = { "Furnace: Wall Emission",
-        HdRTRenderSettingsTokens->furnaceEmission, VtValue(GfVec3f(1.0f)) };
-    _settingDescriptors[4] = { "Furnace: Bounces",
-        HdRTRenderSettingsTokens->furnaceBounces, VtValue(int(HdRTFurnaceConfig().bounces)) };
+    _settingDescriptors[2] = { "Diffuse Bounces",
+        HdRTRenderSettingsTokens->bounces, VtValue(int(HdRTFurnaceConfig().bounces)) };
 
     // std::atomic does not default-initialize; do so here.
     _sceneVersion.store(0);
@@ -120,7 +121,7 @@ HdRTRenderDelegate::_Initialize()
 
     // Passed to prims during Sync(); it gives them a handle on the render thread.
     _renderParam = std::make_shared<HdRTRenderParam>(
-        &_renderThread, &_sceneVersion);
+        &_renderThread, &_sceneVersion, &_scene);
 
     // Set the background render thread's rendering entrypoint to HdRTRenderer::Render.
     _renderThread.SetRenderCallback(
@@ -263,6 +264,18 @@ HdRTRenderDelegate::GetRenderStats() const
     // What this render actually used. verify/s3_delegate.sh compares hrt_seed with the seed it chose.
     stats["hrt_seed"] = s.seed;
     stats["hrt_spp"] = s.spp;
+    // The bounce budget this render used; verify/s4_firstlight.sh compares it with the count it drew.
+    stats["hrt_bounces"] = s.bounces;
+    // The translation census of what Hydra synced; verify/s4_firstlight.sh compares it with its own census
+    // of the stage. Counts are ints, the box is double (husk keeps both types in the EXR header).
+    stats["hrt_mesh_count"] = s.census.meshes;
+    stats["hrt_triangle_count"] = s.census.triangles;
+    // No box (no geometry yet) is reported as no keys, never as a box collapsed at the origin.
+    static const char* axes[3] = { "x", "y", "z" };
+    for (int k = 0; k < 3 && s.census.hasBox; ++k) {
+        stats[std::string("hrt_bbox_min_") + axes[k]] = s.census.bboxMin[k];
+        stats[std::string("hrt_bbox_max_") + axes[k]] = s.census.bboxMax[k];
+    }
     stats["hrt_device"] = s.device;
     stats["hrt_settings_source"] = s.settingsSource;
     stats["hrt_validation_active"] = s.validationActive;
@@ -315,7 +328,8 @@ HdInstancer *
 HdRTRenderDelegate::CreateInstancer(HdSceneDelegate *delegate,
                                     SdfPath const& id)
 {
-    // No rprims are supported yet, so nothing references an instancer; a plain one keeps Hydra content.
+    // Instancing is not expanded yet: an instanced mesh renders once at its own transform (HdRTMesh warns).
+    // A plain instancer keeps Hydra content.
     return new HdInstancer(delegate, id);
 }
 
@@ -329,6 +343,10 @@ HdRprim *
 HdRTRenderDelegate::CreateRprim(TfToken const& typeId,
                                 SdfPath const& rprimId)
 {
+    HDRT_DEBUG("CreateRprim %s %s", typeId.GetText(), rprimId.GetText());
+    if (typeId == HdPrimTypeTokens->mesh) {
+        return new HdRTMesh(rprimId);
+    }
     TF_CODING_ERROR("HoudiniRT: unknown Rprim type %s (%s)", typeId.GetText(), rprimId.GetText());
     return nullptr;
 }
@@ -346,6 +364,8 @@ HdRTRenderDelegate::CreateSprim(TfToken const& typeId,
     HDRT_DEBUG("CreateSprim %s %s", typeId.GetText(), sprimId.GetText());
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(sprimId);
+    } else if (typeId == HdPrimTypeTokens->domeLight) {
+        return new HdRTLight(sprimId);
     } else {
         TF_CODING_ERROR("HoudiniRT: unknown Sprim type %s", typeId.GetText());
     }
@@ -360,6 +380,8 @@ HdRTRenderDelegate::CreateFallbackSprim(TfToken const& typeId)
     // They'll use default values and won't be updated by a scene delegate.
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(SdfPath::EmptyPath());
+    } else if (typeId == HdPrimTypeTokens->domeLight) {
+        return new HdRTLight(SdfPath::EmptyPath());
     } else {
         TF_CODING_ERROR("HoudiniRT: unknown Sprim type %s", typeId.GetText());
     }

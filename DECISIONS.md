@@ -63,3 +63,7 @@
 
 ## 2026-11-11 (X8, live pause in Solaris, checked by Joe)
 - Live pause ok, menu yes, edit-while-paused safe, 22.0.429, 2026-11-11. On the step 3 build (`.claude/worktrees/s3-delegate-shell/build/plugin_stage`): HoudiniRT appears in the Solaris viewport renderer menu (no UsdRenderers.json entry needed); pause stops accumulation and resume continues; tumbling while paused is safe; switching the renderer away and back is clean. This closes the human check owed since s3 (build-spec.md line 43).
+
+## 2026-11-11 (s4 exam sealed)
+- The s4 exam was sealed at d4a9c9d ("seal exam for s4-first-light (reviewed by: Joe Ibrahim)"). Claude ran `seal_exam.ps1 -Milestone s4-first-light -By "Joe Ibrahim"` at Joe's explicit instruction in the session ("Run the seal for me"); the review and the decision to seal are Joe's. Output: merges into _integration and s4-first-light, "sealed s4-first-light at d4a9c9d", exit 0. Three earlier attempts from outside the session never reached the repo.
+- Sealed exam sha256 5bd6027fc9843a71b1137aaeb0d9b9762278a987d405b3d01c563f46c8e0f3d4, identical in verify/s4_firstlight.sh (master, integration, feat/s4-first-light) and drafts/sealed/. state.json: s4-first-light pending, round 1. The night task stays Disabled while a Claude Code session writes the s4 code; do not press Start on the dashboard.

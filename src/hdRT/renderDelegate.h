@@ -16,6 +16,7 @@
 #include "pxr/imaging/hd/renderThread.h"
 
 #include "renderer.h"
+#include "scene.h"
 #include "settings.h"
 
 #include <atomic>
@@ -135,6 +136,10 @@ private:
 
     // A version counter for edits to anything the render thread reads or writes.
     std::atomic<int> _sceneVersion;
+
+    // Meshes and lights as Hydra delivered them (CPU side). Declared before the render param, which
+    // points at it, and before the render thread, which is stopped before anything here is destroyed.
+    HdRTScene _scene;
 
     // Passed to prims during Sync(); stops the render thread before an edit.
     std::shared_ptr<HdRTRenderParam> _renderParam;

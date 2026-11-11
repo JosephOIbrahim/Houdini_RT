@@ -10,7 +10,9 @@
 //
 #include "renderDelegate.h"
 
+#include "light.h"
 #include "log.h"
+#include "mesh.h"
 #include "renderBuffer.h"
 #include "renderParam.h"
 #include "renderPass.h"
@@ -32,14 +34,17 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-// Step 3 draws a built-in scene, so no rprim types yet. Meshes are added in step 4.
+// Step 4: polygon meshes.
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_RPRIM_TYPES =
 {
+    HdPrimTypeTokens->mesh,
 };
 
+// Step 4: the camera and an untextured dome light.
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_SPRIM_TYPES =
 {
     HdPrimTypeTokens->camera,
+    HdPrimTypeTokens->domeLight,
 };
 
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_BPRIM_TYPES =
@@ -120,7 +125,7 @@ HdRTRenderDelegate::_Initialize()
 
     // Passed to prims during Sync(); it gives them a handle on the render thread.
     _renderParam = std::make_shared<HdRTRenderParam>(
-        &_renderThread, &_sceneVersion);
+        &_renderThread, &_sceneVersion, &_scene);
 
     // Set the background render thread's rendering entrypoint to HdRTRenderer::Render.
     _renderThread.SetRenderCallback(
@@ -329,6 +334,10 @@ HdRprim *
 HdRTRenderDelegate::CreateRprim(TfToken const& typeId,
                                 SdfPath const& rprimId)
 {
+    HDRT_DEBUG("CreateRprim %s %s", typeId.GetText(), rprimId.GetText());
+    if (typeId == HdPrimTypeTokens->mesh) {
+        return new HdRTMesh(rprimId);
+    }
     TF_CODING_ERROR("HoudiniRT: unknown Rprim type %s (%s)", typeId.GetText(), rprimId.GetText());
     return nullptr;
 }
@@ -346,6 +355,8 @@ HdRTRenderDelegate::CreateSprim(TfToken const& typeId,
     HDRT_DEBUG("CreateSprim %s %s", typeId.GetText(), sprimId.GetText());
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(sprimId);
+    } else if (typeId == HdPrimTypeTokens->domeLight) {
+        return new HdRTLight(sprimId);
     } else {
         TF_CODING_ERROR("HoudiniRT: unknown Sprim type %s", typeId.GetText());
     }
@@ -360,6 +371,8 @@ HdRTRenderDelegate::CreateFallbackSprim(TfToken const& typeId)
     // They'll use default values and won't be updated by a scene delegate.
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(SdfPath::EmptyPath());
+    } else if (typeId == HdPrimTypeTokens->domeLight) {
+        return new HdRTLight(SdfPath::EmptyPath());
     } else {
         TF_CODING_ERROR("HoudiniRT: unknown Sprim type %s", typeId.GetText());
     }

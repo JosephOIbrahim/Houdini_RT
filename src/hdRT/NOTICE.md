@@ -14,7 +14,9 @@ licence text, are in `third_party/openusd_hdEmbree/` (`LICENSE.txt`).
 | `renderDelegate.h`, `renderDelegate.cpp` | `renderDelegate.h/.cpp` | Embree, meshes, lights and instancers removed; settings, statistics and shader lookup are new |
 | `renderPass.h`, `renderPass.cpp` | `renderPass.h/.cpp` | settings resolved through the delegate; AOV buffers given by path are looked up; debug trace added |
 | `renderBuffer.h`, `renderBuffer.cpp` | `renderBuffer.h/.cpp` | per-pixel sample accumulation removed; 8-bit writes clamped |
-| `renderParam.h` | `renderParam.h` | Embree handles removed |
+| `renderParam.h` | `renderParam.h` | Embree handles removed; carries the scene prims publish into |
+| `mesh.h`, `mesh.cpp` | `mesh.h/.cpp` | Embree, subdivision, primvar samplers, culling and instancing removed; smooth normals kept for every subdivision scheme; publishes to `scene.h` |
+| `light.h`, `light.cpp` | `light.h/.cpp` | only the untextured dome is kept; publishes one radiance to `scene.h` |
 | `renderer.h`, `renderer.cpp` | `renderer.h/.cpp` | only the structure is kept (setters, AOV validation, Clear, the pass loop with its pause and stop points); the tracing is new |
 
 Each of these files carries Pixar's original copyright header followed by a "Modified for HoudiniRT"
@@ -31,7 +33,7 @@ reference files and the licence text are in `third_party/sascha_willems_vulkan/`
 
 ## New in this project
 
-`vkFurnace.h`, the rest of `vkFurnace.cpp`, `shaders/furnace.comp`, `settings.h`, `settings.cpp`, `log.h`,
+`scene.h`, `vkFurnace.h`, the rest of `vkFurnace.cpp`, `shaders/furnace.comp`, `settings.h`, `settings.cpp`, `log.h`,
 `test/furnace_standalone.cpp`, `CMakeLists.txt`, `plugInfo.json`, `README.md`.
 
 No code under a copyleft licence is used, linked or was consulted.

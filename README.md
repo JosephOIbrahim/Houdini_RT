@@ -157,7 +157,7 @@ The branch `main` holds the contract, the exams and the loop. `integration` hold
 
 Surfaces are Lambertian with a constant `displayColor`, and the only light is an untextured dome. There are no textures, no other lights, no instancing, no subdivision, and no outputs besides colour yet. **The picture cannot yet tell smooth normals from flat ones**, because a uniform dome lights a Lambertian surface the same from every side; the exam enforces smooth normals by reading the source until s5 brings a light with a direction.
 
-Pause and resume work in the Solaris viewport and were checked by hand; the exams check them only by reading the source.
+Pause and resume were checked by hand in the Solaris viewport on the step 3 build; the s4 code changed the pause path and has not been rechecked live yet. The exams check pause only by reading the source.
 
 ---
 
@@ -177,7 +177,7 @@ Pause and resume work in the Solaris viewport and were checked by hand; the exam
 
 ### <img src="assets/readme/umber.svg" width="11" height="11" alt=""> 10. Licence and credits
 
-Houdini_RT is released under the Apache License 2.0; see `LICENSE`. Code under `third_party/` keeps its own licence: Pixar's hdEmbree example delegate (Tomorrow Open Source Technology License 1.0), Sascha Willems' Vulkan samples (MIT), and the usd-wg Utah teapot (CC0). Adobe's OpenPBR BSDF (Apache 2.0) is used from its own checkout and is not included.
+Houdini_RT is released under the Apache License 2.0; see `LICENSE`. Files in `src/hdRT` adapted from Pixar's hdEmbree keep Pixar's headers and the Tomorrow Open Source Technology License; `src/hdRT/NOTICE.md` lists them. Code under `third_party/` keeps its own licence: Pixar's hdEmbree example delegate (Tomorrow Open Source Technology License 1.0), Sascha Willems' Vulkan samples (MIT), and the usd-wg Utah teapot (CC0). Adobe's OpenPBR BSDF (Apache 2.0) is used from its own checkout and is not included.
 
 Houdini, Solaris, Karma and the HDK are products of SideFX. This project is independent and not affiliated with or endorsed by SideFX. Karma appears here only as a reference renderer in the exams.
 

@@ -77,6 +77,9 @@ HdRTFlattenScene(HdRTSceneSnapshot const& snapshot)
         GfMatrix3d N = M.ExtractRotationMatrix();
         const double det = N.GetDeterminant();
         const bool invertible = std::abs(det) > 1e-300;
+        // A mirroring transform (negative determinant) flips the world-space winding; reverse it so the
+        // face normal from the winding agrees with the inverse-transpose shading normals.
+        const bool mirrored = det < 0.0;
         if (invertible) {
             N = N.GetInverse().GetTranspose();
         }
@@ -109,9 +112,9 @@ HdRTFlattenScene(HdRTSceneSnapshot const& snapshot)
         world->indices.reserve(world->indices.size() + 3 * nTris);
         world->albedo.reserve(world->albedo.size() + 4 * nTris);
         for (const GfVec3i& t : mesh.triangles) {
-            for (int k = 0; k < 3; ++k) {
-                world->indices.push_back(base + uint32_t(t[k]));
-            }
+            world->indices.push_back(base + uint32_t(t[0]));
+            world->indices.push_back(base + uint32_t(mirrored ? t[2] : t[1]));
+            world->indices.push_back(base + uint32_t(mirrored ? t[1] : t[2]));
             world->albedo.push_back(mesh.albedo[0]);
             world->albedo.push_back(mesh.albedo[1]);
             world->albedo.push_back(mesh.albedo[2]);

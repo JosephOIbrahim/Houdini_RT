@@ -16,6 +16,7 @@
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/path.h"
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -43,6 +44,7 @@ struct HdRTDomeData
 /// Everything the renderer needs from Hydra, copied out under the lock.
 struct HdRTSceneSnapshot
 {
+    uint64_t contentVersion = 0;   ///< moves on every mesh or light change, and only then
     std::map<SdfPath, std::shared_ptr<const HdRTMeshData>> meshes;
     std::map<SdfPath, HdRTDomeData> domes;
 };
@@ -54,24 +56,28 @@ public:
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _snapshot.meshes[id] = std::move(mesh);
+        ++_snapshot.contentVersion;
     }
 
     void RemoveMesh(SdfPath const& id)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _snapshot.meshes.erase(id);
+        ++_snapshot.contentVersion;
     }
 
     void SetDome(SdfPath const& id, HdRTDomeData const& dome)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _snapshot.domes[id] = dome;
+        ++_snapshot.contentVersion;
     }
 
     void RemoveDome(SdfPath const& id)
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _snapshot.domes.erase(id);
+        ++_snapshot.contentVersion;
     }
 
     /// A consistent copy. Mesh payloads are shared, immutable and cheap to copy.

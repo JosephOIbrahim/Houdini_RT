@@ -274,8 +274,9 @@ HdRTRenderDelegate::GetRenderStats() const
     // of the stage. Counts are ints, the box is double (husk keeps both types in the EXR header).
     stats["hrt_mesh_count"] = s.census.meshes;
     stats["hrt_triangle_count"] = s.census.triangles;
+    // No box (no geometry yet) is reported as no keys, never as a box collapsed at the origin.
     static const char* axes[3] = { "x", "y", "z" };
-    for (int k = 0; k < 3; ++k) {
+    for (int k = 0; k < 3 && s.census.hasBox; ++k) {
         stats[std::string("hrt_bbox_min_") + axes[k]] = s.census.bboxMin[k];
         stats[std::string("hrt_bbox_max_") + axes[k]] = s.census.bboxMax[k];
     }

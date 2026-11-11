@@ -47,7 +47,7 @@ Author these on the RenderSettings prim. Houdini passes them to the delegate as 
 | `houdinirt:seed` | int | 1 | seed for the per-pixel random streams |
 | `houdinirt:furnace:rho` | float | 0.5 | wall albedo |
 | `houdinirt:furnace:emission` | color3f | (1, 1, 1) | wall emission |
-| `houdinirt:furnace:bounces` | int | 16 | bounces after the first hit |
+| `houdinirt:bounces` | int | 16 | diffuse bounces after the first hit (renamed from `houdinirt:furnace:bounces` in s4; the default stays outside the s4 exam's drawn set 6, 7, 9..12) |
 
 For each value the delegate uses, in this order: the render setting, else the JSON file named by the
 environment variable `HOUDINIRT_S3_CONFIG` (keys `seed`, `spp`, `rho`, `emission`, `bounces`), else the

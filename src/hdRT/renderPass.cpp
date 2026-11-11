@@ -121,10 +121,16 @@ HdRTRenderPass::_Execute(HdRenderPassStateSharedPtr const& renderPassState,
     if (_lastSceneVersion != currentSceneVersion || !_sceneHandedOver) {
         needStartRender = true;
         _lastSceneVersion = currentSceneVersion;
+    }
+    // The scene version also moves for render-buffer edits (a viewport resize). Re-flatten only when a
+    // mesh or a light really changed, or on the first Execute.
+    HdRTSceneSnapshot snapshot = renderDelegate->GetScene().Snapshot();
+    if (!_sceneHandedOver || snapshot.contentVersion != _lastContentVersion) {
+        needStartRender = true;
         _sceneHandedOver = true;
+        _lastContentVersion = snapshot.contentVersion;
 
-        std::shared_ptr<const HdRTWorldScene> world =
-            HdRTFlattenScene(renderDelegate->GetScene().Snapshot());
+        std::shared_ptr<const HdRTWorldScene> world = HdRTFlattenScene(snapshot);
         const HdRTCensus& c = world->census;
         HDRT_DEBUG("scene v%d: %d meshes, %d triangles (%zu uploaded), box [%.6f %.6f %.6f .. %.6f %.6f %.6f], dome (%.6f, %.6f, %.6f)",
                    currentSceneVersion, c.meshes, c.triangles, world->TriangleCount(),

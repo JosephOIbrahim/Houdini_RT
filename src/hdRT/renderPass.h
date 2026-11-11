@@ -73,6 +73,7 @@ private:
     // The last scene version we rendered with.
     int _lastSceneVersion;
     bool _sceneHandedOver = false;   // the first Execute always hands a scene over
+    uint64_t _lastContentVersion = 0;  // HdRTScene content version last flattened
 
     // The last settings version we rendered with, and the furnace parameters it resolved to.
     int _lastSettingsVersion;

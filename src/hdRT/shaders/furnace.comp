@@ -193,7 +193,8 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         // Cosine about the shading normal. A sample that falls below the geometric face carries no light
         // (the Lambert BRDF with a shading normal is zero there), so the path ends. Measured against Karma
         // CPU on nonce 101 (C6, 2026-11-11): mirroring such samples back up added a +0.1% bias and doubled
-        // the FLIP gap; ending the path or sampling about the face normal both match Karma within noise.
+        // the FLIP gap (per-pixel residual against Karma, noise removed, about 2%); ending the path or
+        // sampling about the face normal leaves about 1%, a level within 0.05%. Not zero: see DECISIONS.md.
         direction = cosine_hemisphere(ns, rng);
         if (dot(direction, ng) <= 0.0)
         {

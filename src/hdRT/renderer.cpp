@@ -348,8 +348,8 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
 
     // ---- scene: built on the render thread whenever the render pass handed over a new one --------------
     // (Acceleration structures are never built in Sync or Execute: CLAUDE.md:30.)
-    // A paused render does no GPU work, the upload included (Houdini pauses on edits, and a pause outlives
-    // StopRender/StartRender). Hold here exactly as the pass loop does, then honour a stop.
+    // A paused render submits no GPU work: the scene upload waits for Resume (Houdini pauses on edits, and a
+    // pause outlives StopRender/StartRender). Hold here exactly as the pass loop does, then honour a stop.
     while (renderThread->IsPauseRequested() && !renderThread->IsStopRequested()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }

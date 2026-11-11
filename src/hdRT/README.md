@@ -11,13 +11,14 @@ other lights, instancing, subdivision, AOVs other than colour.
 
 ## Build
 
-The sealed exam builds it like this (from the repo root, Git Bash, `VULKAN_SDK` set):
+The sealed exam (`verify/s4_firstlight.sh`) builds it like this (from the repo root, Git Bash,
+`VULKAN_SDK` set):
 
 ```
-cmake -S src/hdRT -B build/s3/cmake -G "Visual Studio 17 2022" -A x64 \
+cmake -S src/hdRT -B build/s4/cmake -G "Visual Studio 17 2022" -A x64 \
       -DCMAKE_PREFIX_PATH="C:/Program Files/Side Effects Software/Houdini 22.0.429/toolkit/cmake"
-cmake --build build/s3/cmake --config Release
-cmake --install build/s3/cmake --config Release --prefix build/plugin_stage
+cmake --build build/s4/cmake --config Release
+cmake --install build/s4/cmake --config Release --prefix build/plugin_stage
 ```
 
 `build/plugin_stage` then holds `plugInfo.json`, `hdRT.dll` and `shaders/furnace.spv`. Nothing is
@@ -63,14 +64,15 @@ says which source was used. The step 3 furnace settings (`houdinirt:furnace:*`) 
 
 ## What it prints
 
-One line each, on stderr, prefixed `HoudiniRT: `. The exam reads the first four.
+One line each, on stderr, prefixed `HoudiniRT: `, in this order. The exam reads the validation line, the
+seed line, and the render thread start and stop lines.
 
 ```
 HoudiniRT: validation layer active                       only if the layer really loaded
 HoudiniRT: seed=<seed> spp=<spp> device=<GPU name>
+HoudiniRT: bounces=..., WxH, values from <source>; scene: N triangles, dome (r, g, b)
 HoudiniRT: render thread start
 HoudiniRT: render thread stop
-HoudiniRT: bounces=..., WxH, values from <source>; scene: N triangles, dome (r, g, b)
 HoudiniRT: Validation Error: [ id ] ...                   anything the validation layer objects to
 HoudiniRT: ERROR: ...                                     a failure; the render ends, Houdini does not crash
 ```
@@ -124,9 +126,10 @@ furnace_standalone furnace.spv --empty
 
 ## Not done yet
 
-- Scene geometry, materials and lights (step 4). The delegate declares no rprim types.
-- Pause and resume are implemented through `HdRenderThread` and checked by the exam only by reading the
-  source. Nobody has pressed pause in the Solaris viewport yet. That check is owed before step 4.
+- Materials beyond a constant `displayColor`, textures, lights other than an untextured dome, instancing,
+  subdivision, render tags (proxy/guide toggles in the viewport).
+- Pause and resume are checked by the exam only by reading the source; Joe checked live pause in the
+  Solaris viewport on 2026-11-11 (DECISIONS.md).
 - AOVs other than colour (depth, ids, normals) are cleared and never written.
 - The running average is copied to Houdini's buffer on the CPU after every pass. Fine at this size, to
   be revisited when the viewport runs at full resolution.

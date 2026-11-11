@@ -155,7 +155,8 @@ struct HdRTVkFurnace::Impl
                                                  const VkDebugUtilsMessengerCallbackDataEXT* data, void* user);
 
     uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags wanted) const;
-    // gpuReads: the kernel reads it on every hit; prefer device-local memory the host can write (resizable BAR).
+    // gpuReads: the kernel reads it on every hit; prefer device-local memory the host can write when its
+    // heap is large (resizable BAR), else host memory.
     bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads = false,
                       bool gpuReads = false);
     void DestroyBuffer(Buffer& b);
@@ -230,18 +231,39 @@ bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usa
     VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
     ai.allocationSize = req.size;
     const VkMemoryPropertyFlags hostFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    ai.memoryTypeIndex = UINT32_MAX;
-    if (hostVisible && cpuReads)
-        ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-    else if (hostVisible && gpuReads)
-        ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (ai.memoryTypeIndex == UINT32_MAX)
-        ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostVisible ? hostFlags : VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
-    if (ai.memoryTypeIndex == UINT32_MAX)
-        return _Fail(error, "no suitable memory type for a buffer");
     if (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT)
         ai.pNext = &flags;
-    HDRT_VK(vkAllocateMemory(device, &ai, nullptr, &out->memory));
+
+    // gpuReads: try device-local memory the host can write, but only on a heap large enough that this
+    // buffer is a small share of it. Without resizable BAR that heap is about 256 MB and shared with the
+    // driver and Houdini's viewport, so it is skipped; and if the allocation fails anyway, fall back.
+    if (hostVisible && gpuReads)
+    {
+        const uint32_t t = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (t != UINT32_MAX)
+        {
+            VkPhysicalDeviceMemoryProperties mp;
+            vkGetPhysicalDeviceMemoryProperties(phys, &mp);
+            const VkDeviceSize heap = mp.memoryHeaps[mp.memoryTypes[t].heapIndex].size;
+            if (heap > (VkDeviceSize(1) << 30) && req.size * 8 <= heap)
+            {
+                ai.memoryTypeIndex = t;
+                if (vkAllocateMemory(device, &ai, nullptr, &out->memory) != VK_SUCCESS)
+                    out->memory = VK_NULL_HANDLE;   // full or refused: host memory below
+            }
+        }
+    }
+    if (!out->memory)
+    {
+        ai.memoryTypeIndex = UINT32_MAX;
+        if (hostVisible && cpuReads)
+            ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+        if (ai.memoryTypeIndex == UINT32_MAX)
+            ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostVisible ? hostFlags : VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
+        if (ai.memoryTypeIndex == UINT32_MAX)
+            return _Fail(error, "no suitable memory type for a buffer");
+        HDRT_VK(vkAllocateMemory(device, &ai, nullptr, &out->memory));
+    }
     HDRT_VK(vkBindBufferMemory(device, out->buffer, out->memory, 0));
     if (hostVisible)
         HDRT_VK(vkMapMemory(device, out->memory, 0, VK_WHOLE_SIZE, 0, &out->mapped));
@@ -563,7 +585,7 @@ bool HdRTVkFurnace::Impl::BuildScene(const float* positions, const float* normal
 
     // Positions are a build input and a storage buffer (the shader interpolates the hit point from them);
     // the rest are storage buffers only. Written once per edit from the host; placed in device-local memory
-    // the host can write when the device offers it (resizable BAR), else in host memory.
+    // the host can write when that heap is large (resizable BAR), else in host memory (see CreateBuffer).
     const VkBufferUsageFlags inputUsage =
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     const VkBufferUsageFlags geomUsage = inputUsage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -853,6 +875,8 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
         d.width = 0;
         d.height = 0;
         const VkDeviceSize bytes = VkDeviceSize(frame.width) * frame.height * 4 * sizeof(float);
+        if (d.maxStorageBufferRange && bytes > VkDeviceSize(d.maxStorageBufferRange))
+            return _Fail(error, "the image is larger than this device's maxStorageBufferRange allows");
         if (!d.CreateBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &d.accumBuffer, error, /*cpuReads=*/true))
             return false;
         d.width = frame.width;

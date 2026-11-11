@@ -10,8 +10,9 @@
 
 ## Current delta
 - s3 is done. It was put on its branch by hand (Claude, on the owner's go, 2026-10-06) and merges only on the loop's trusted check. The Generator and the Scribe did not run for it; its lessons are in `DECISIONS.md` under 2026-10-06.
-- Owed before s4 (human): press pause and resume in the Solaris viewport with HoudiniRT selected. The exam checks pause only by reading the source.
-- Next milestone per build order: **s4-first-light** (mesh and camera sync, Teapot under a dome light vs Karma CPU). Its exam is not sealed yet. Start from `src/hdRT/`: the delegate declares no rprim types yet, and `vkFurnace.*` traces a hardcoded box.
+- The Solaris live-pause check owed since s3 was done by Joe on 2026-11-11 (DECISIONS.md).
+- **s4-first-light in progress** (Claude Code session, branch `claude/s4-first-light`, worktree `_work/s4-claude`; Joe seals the exam, frozen sha256 5bd6027f…f3d4). Done: **C2** `HdRTMesh` (`mesh.*`: points, topology, transform, visibility, constant displayColor; `HdMeshUtil::ComputeTriangleIndices`; `Hd_SmoothNormals` always; points/topology mismatch published empty with a warning; instanced meshes warn) and **C3** `HdRTLight` dome (`light.*`: radiance = intensity * 2^exposure * color), both publishing into the CPU-side `HdRTScene` (`scene.h`) carried by the render param. Against the frozen exam (real teapot): stages [0]-[6] pass; [7] stops on `hrt_bounces`. A debug husk run logs 2,482 triangles, the exact albedos and the dome radiance equal to the exam's truth to 6 digits.
+- Next: C1 `houdinirt:bounces` (default outside 6..12) and `hrt_bounces`; C4 world-space snapshot in Execute + census stats; C5 GPU scene upload and the Lambert path kernel (the renderer does not read `HdRTScene` yet).
 
 ## Parked ideas (one line each)
 - s3: a headless pause test (C++ against the HDK: render index, the delegate, Pause, watch `numCompletedSamples` stop) would replace the human viewport check.

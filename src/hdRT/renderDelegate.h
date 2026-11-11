@@ -5,8 +5,8 @@
 // https://openusd.org/license.
 //
 // Modified for HoudiniRT (2026): adapted from OpenUSD 26.03,
-// pxr/imaging/plugin/hdEmbree/renderDelegate.h. Embree, meshes, lights and instancers are removed;
-// the renderer is this project's Vulkan furnace. See NOTICE.md in this directory.
+// pxr/imaging/plugin/hdEmbree/renderDelegate.h. Embree, instancers and every light but the dome are
+// removed; meshes and the dome are this project's HdRTMesh and HdRTLight; the renderer is its own Vulkan tracer. See NOTICE.md in this directory.
 //
 #ifndef HDRT_RENDER_DELEGATE_H
 #define HDRT_RENDER_DELEGATE_H

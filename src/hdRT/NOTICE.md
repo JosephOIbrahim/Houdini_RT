@@ -11,7 +11,7 @@ licence text, are in `third_party/openusd_hdEmbree/` (`LICENSE.txt`).
 | File here | Adapted from | What changed |
 |---|---|---|
 | `rendererPlugin.h`, `rendererPlugin.cpp` | `rendererPlugin.h/.cpp` | class renamed; creates `HdRTRenderDelegate` |
-| `renderDelegate.h`, `renderDelegate.cpp` | `renderDelegate.h/.cpp` | Embree, meshes, lights and instancers removed; settings, statistics and shader lookup are new |
+| `renderDelegate.h`, `renderDelegate.cpp` | `renderDelegate.h/.cpp` | Embree, instancers and every light but the dome removed; creates `HdRTMesh` and the dome `HdRTLight`; settings, statistics and shader lookup are new |
 | `renderPass.h`, `renderPass.cpp` | `renderPass.h/.cpp` | settings resolved through the delegate; AOV buffers given by path are looked up; debug trace added |
 | `renderBuffer.h`, `renderBuffer.cpp` | `renderBuffer.h/.cpp` | per-pixel sample accumulation removed; 8-bit writes clamped |
 | `renderParam.h` | `renderParam.h` | Embree handles removed; carries the scene prims publish into |

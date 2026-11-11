@@ -59,6 +59,7 @@ private:
     bool               _adjacencyValid = false;
     VtVec3iArray       _triangles;
     VtVec3fArray       _normals;
+    bool               _warnedInstanced = false;
 
     HdRTMesh(const HdRTMesh&)             = delete;
     HdRTMesh &operator =(const HdRTMesh&) = delete;

@@ -5,8 +5,8 @@
 // https://openusd.org/license.
 //
 // Modified for HoudiniRT (2026): adapted from OpenUSD 26.03,
-// pxr/imaging/plugin/hdEmbree/renderDelegate.cpp. Embree, meshes, lights and instancers are removed;
-// the renderer is this project's Vulkan furnace. See NOTICE.md in this directory.
+// pxr/imaging/plugin/hdEmbree/renderDelegate.cpp. Embree, instancers and every light but the dome are
+// removed; meshes and the dome are this project's HdRTMesh and HdRTLight; the renderer is its own Vulkan tracer. See NOTICE.md in this directory.
 //
 #include "renderDelegate.h"
 
@@ -320,7 +320,8 @@ HdInstancer *
 HdRTRenderDelegate::CreateInstancer(HdSceneDelegate *delegate,
                                     SdfPath const& id)
 {
-    // No rprims are supported yet, so nothing references an instancer; a plain one keeps Hydra content.
+    // Instancing is not expanded yet: an instanced mesh renders once at its own transform (HdRTMesh warns).
+    // A plain instancer keeps Hydra content.
     return new HdInstancer(delegate, id);
 }
 

@@ -44,6 +44,7 @@ HdRTMesh::GetInitialDirtyBitsMask() const
         | HdChangeTracker::DirtyVisibility
         | HdChangeTracker::DirtyPrimvar
         | HdChangeTracker::DirtyNormals
+        | HdChangeTracker::DirtyInstancer
         ;
     return (HdDirtyBits)mask;
 }
@@ -99,8 +100,17 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
 
     bool geometryDirty = false;
 
+    // Instanced rprims (point instancers, native instancing) are not expanded yet: say so once.
+    _UpdateInstancer(sceneDelegate, dirtyBits);
+    if (!GetInstancerId().IsEmpty() && !_warnedInstanced) {
+        HdRTLog("WARNING: mesh %s is instanced by %s; instancing is not supported yet, "
+                "it renders once at its own transform", id.GetText(), GetInstancerId().GetText());
+        _warnedInstanced = true;
+    }
+
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
-        _points = sceneDelegate->Get(id, HdTokens->points).Get<VtVec3fArray>();
+        // A value of another type (or none) becomes an empty array, caught by the check below.
+        _points = sceneDelegate->Get(id, HdTokens->points).GetWithDefault<VtVec3fArray>(VtVec3fArray());
         geometryDirty = true;
     }
 
@@ -135,6 +145,23 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
         }
         HDRT_DEBUG("mesh %s displayColor arrives as %s -> albedo (%.4f, %.4f, %.4f)",
                    id.GetText(), value.GetTypeName().c_str(), _albedo[0], _albedo[1], _albedo[2]);
+    }
+
+    // Every index the topology uses must name a point that exists. A points-only edit can change the
+    // count without a topology edit, and malformed USD can index past the end; either would send the
+    // triangle indices and Hd_SmoothNormals out of bounds. Such a mesh is published empty, with a warning.
+    if (geometryDirty) {
+        const int need = _topology.GetNumPoints();
+        if (int(_points.size()) < need) {
+            HdRTLog("WARNING: mesh %s has %zu points but its topology uses %d; it is not rendered",
+                    id.GetText(), _points.size(), need);
+            auto empty = std::make_shared<HdRTMeshData>();
+            empty->transform = _transform;
+            empty->visible = false;
+            param->GetScene()->SetMesh(id, std::move(empty));
+            *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
+            return;
+        }
     }
 
     // Smooth vertex normals, always (see the class comment): the adjacency table follows the topology,

@@ -323,7 +323,6 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
     options.spvPath = _spvPath;
     options.validation = _config.validation;
     options.allowSoftwareDevice = _config.allowSoftwareDevice;
-    options.openFace = _config.openFace;
     if (!_gpu.IsReady() || options != _gpuOptions) {
         if (_gpuInitFailed && options == _gpuOptions) {
             _Fail("the GPU could not be initialised earlier in this session; not retrying");
@@ -344,15 +343,35 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
         if (_gpu.ValidationActive()) {
             HdRTLog("validation layer active");
         }
-        if (_config.openFace >= 0) {
-            HdRTLog("DEBUG BUILD OF THE SCENE: wall %d of the box is left out (HOUDINIRT_DEBUG_OPEN_FACE)", _config.openFace);
+        _uploadedScene.reset();   // a fresh device holds no scene
+    }
+
+    // ---- scene: built on the render thread whenever the render pass handed over a new one --------------
+    // (Acceleration structures are never built in Sync or Execute: CLAUDE.md:30.)
+    if (renderThread->IsStopRequested()) {
+        HdRTLog("render thread start");
+        HdRTLog("render thread stop");
+        return;
+    }
+    if (_scene != _uploadedScene) {
+        const auto s0 = std::chrono::steady_clock::now();
+        static const HdRTWorldScene empty;
+        const HdRTWorldScene& w = _scene ? *_scene : empty;
+        if (!_gpu.SetScene(w.positions.data(), w.normals.data(), w.VertexCount(), w.indices.data(),
+                           w.albedo.data(), w.TriangleCount(), &error)) {
+            _Fail(error);
+            return;
         }
+        _uploadedScene = _scene;
+        HDRT_DEBUG("scene uploaded: %zu vertices, %zu triangles in %.3f s", w.VertexCount(), w.TriangleCount(),
+                   std::chrono::duration<double>(std::chrono::steady_clock::now() - s0).count());
     }
 
     HdRTLog("seed=%d spp=%d device=%s", _config.seed, _config.spp, _gpu.DeviceName().c_str());
-    HdRTLog("bounces=%d, %dx%d, values from %s; test scene: furnace rho=%g emission=(%g, %g, %g)",
-            _config.bounces, dwW, dwH, _config.source.c_str(),
-            double(_config.rho), double(_config.emission[0]), double(_config.emission[1]), double(_config.emission[2]));
+    HdRTLog("bounces=%d, %dx%d, values from %s; scene: %zu triangles, dome (%g, %g, %g)",
+            _config.bounces, dwW, dwH, _config.source.c_str(), _scene ? _scene->TriangleCount() : size_t(0),
+            _scene ? double(_scene->dome[0]) : 0.0, _scene ? double(_scene->dome[1]) : 0.0,
+            _scene ? double(_scene->dome[2]) : 0.0);
 
     HdRTLog("render thread start");
 
@@ -362,10 +381,11 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
     _CopyMatrix(_inverseViewMatrix, frame.invView);
     _CopyMatrix(_inverseProjMatrix, frame.invProj);
     frame.orthographic = (std::round(_projMatrix[3][3]) == 1.0);
-    frame.rho = _config.rho;
-    frame.emission[0] = _config.emission[0];
-    frame.emission[1] = _config.emission[1];
-    frame.emission[2] = _config.emission[2];
+    if (_scene) {
+        frame.dome[0] = _scene->dome[0];
+        frame.dome[1] = _scene->dome[1];
+        frame.dome[2] = _scene->dome[2];
+    }
     frame.bounces = uint32_t(_config.bounces);
     frame.seed = uint32_t(_config.seed);
 

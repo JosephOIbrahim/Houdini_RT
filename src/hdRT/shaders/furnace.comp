@@ -1,23 +1,23 @@
 #version 460
 #extension GL_EXT_ray_query : require
 
-// furnace.comp - step 3 kernel: the closed-box furnace from step 2, seen through the Hydra camera.
+// furnace.comp - the step 4 kernel: Lambertian path tracing of the Hydra scene under a uniform dome.
+// (The file keeps its step 3 name so the build and the plugin resource path do not move.)
 //
-// One dispatch adds one sample to every pixel: a camera ray, then a path that bounces around inside the
-// unit cube [0,1]^3. The walls are Lambertian with albedo rho and they all emit E (RGB).
+// One dispatch adds one sample to every pixel: a camera ray jittered inside its pixel (a box filter one
+// pixel wide), then a path. The scene is one world-space triangle mesh (the render pass flattens every
+// Hydra mesh, transforms applied); each triangle carries its albedo. Contract, from the exam header:
 //
-// Estimator: bounces are COSINE-weighted about the inward wall normal, so each bounce multiplies the
-// throughput by exactly rho (BRDF rho/pi, times cos, over pdf cos/pi). With the first hit plus `bounces`
-// further bounces every path that stays in the box returns exactly
+//   - A camera ray that hits nothing is black with alpha 0: the dome is never visible to the camera.
+//   - The first hit plus `bounces` further diffuse bounces. A path that leaves the scene collects
+//     throughput * dome radiance. A path still inside after its last allowed bounce contributes nothing.
+//   - Lambertian: bounces are cosine-weighted about the shading normal, so each one multiplies the
+//     throughput by exactly the albedo. No clamping, no Russian roulette, no denoiser.
+//   - A face seen from behind shades as if its normal pointed at the viewer, and blocks light like any
+//     other (Karma does this whatever doubleSided says).
 //
-//     L = E * (1 + rho + rho^2 + ... + rho^bounces) = E * (1 - rho^(bounces+1)) / (1 - rho)
-//
-// which is the analytic value the step 3 exam checks. In a closed box this has zero variance, so the image
-// is constant. A ray that leaves the box ends its path and the pixel comes out darker: a leak cannot hide.
-// (Step 2 used uniform-hemisphere bounces with weight rho * 2 * cos. Same expectation, more noise.)
-//
-// The camera rays, the pixel grid and the per-pixel random streams are real: set HOUDINIRT_DEBUG_OPEN_FACE
-// to leave a wall out and the image stops being constant.
+// RGB is accumulated per sample and alpha counts the camera rays that hit, so the averaged image is
+// premultiplied by coverage.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -29,18 +29,25 @@ layout(std430, set = 0, binding = 1) readonly buffer Frame
 {
     mat4 invView;        // camera space -> world space
     mat4 invProj;        // normalised device coordinates -> camera space
-    vec4 emissionRho;    // rgb = wall emission, a = wall albedo
+    vec4 dome;           // rgb = dome radiance, a unused
     uvec4 size;          // width, height, bounces, seed
     uvec4 pass;          // pass index, orthographic flag, unused, unused
 } frame;
 
-// One vec4 per pixel, row 0 at the bottom: rgb = summed radiance, a = number of camera rays that hit the box.
+// One vec4 per pixel, row 0 at the bottom: rgb = summed radiance, a = number of camera rays that hit.
 layout(std430, set = 0, binding = 2) buffer Accum
 {
     vec4 sum[];
 } accum;
 
-const float T_MAX = 1.0e4;
+// The flattened scene. Positions and normals are tightly packed xyz floats (std430 float arrays), the same
+// memory the acceleration structure was built from.
+layout(std430, set = 0, binding = 3) readonly buffer Positions { float p[]; } positions;
+layout(std430, set = 0, binding = 4) readonly buffer Normals   { float n[]; } normals;
+layout(std430, set = 0, binding = 5) readonly buffer Indices   { uint  i[]; } indices;
+layout(std430, set = 0, binding = 6) readonly buffer Albedo    { vec4  a[]; } albedo;
+
+const float T_MAX = 1.0e30;
 const float PI = 3.14159265358979;
 
 uint pcg_next(inout uint state)
@@ -66,34 +73,6 @@ float rand01(inout uint state)
     return float(pcg_next(state) >> 8u) * (1.0 / 16777216.0);
 }
 
-// Closest hit along `direction` (unit length here). On a hit it returns the distance and which wall was
-// hit: the cube is 12 triangles, two per wall, in the order vkFurnace.cpp builds them.
-bool closest_hit(vec3 origin, vec3 direction, out float t, out int wall)
-{
-    rayQueryEXT rq;
-    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, origin, 0.0, direction, T_MAX);
-    while (rayQueryProceedEXT(rq)) {}
-    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
-    {
-        t = rayQueryGetIntersectionTEXT(rq, true);
-        wall = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true) / 2;
-        return true;
-    }
-    t = -1.0;
-    wall = -1;
-    return false;
-}
-
-// Inward normals of the six walls, in build order: z=0, z=1, y=0, y=1, x=0, x=1.
-const vec3 WALL_NORMAL[6] = vec3[6](vec3(0.0, 0.0, 1.0), vec3(0.0, 0.0, -1.0), vec3(0.0, 1.0, 0.0),
-                                    vec3(0.0, -1.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(-1.0, 0.0, 0.0));
-
-// How far inside the box every bounce starts. The normal comes from the triangle that was hit, never
-// from the hit position, and the next origin is pulled this far inside every wall. A path that starts
-// strictly inside a closed convex box and heads away from the wall it left cannot escape, so the kernel
-// needs no minimum ray distance and has no way to leak through an edge on rounding error.
-const float INSET = 1.0e-4;
-
 // A direction about the unit normal n with density cos(theta) / pi.
 vec3 cosine_hemisphere(vec3 n, inout uint rng)
 {
@@ -107,39 +86,116 @@ vec3 cosine_hemisphere(vec3 n, inout uint rng)
     return normalize(r * cos(phi) * t + r * sin(phi) * b + sqrt(max(0.0, 1.0 - u1)) * n);
 }
 
-// Returns the number of wall hits weighted by throughput, 1 + rho + rho^2 + ..., and whether the camera
-// ray itself hit the box. Multiply by E for radiance.
-float furnace_path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
+vec3 vertex_position(uint v)
 {
-    const float rho = frame.emissionRho.a;
-    const uint budget = frame.size.z;
+    return vec3(positions.p[3u * v], positions.p[3u * v + 1u], positions.p[3u * v + 2u]);
+}
 
-    float throughput = 1.0;
-    float gathered = 0.0;
+vec3 vertex_normal(uint v)
+{
+    return vec3(normals.n[3u * v], normals.n[3u * v + 1u], normals.n[3u * v + 2u]);
+}
+
+// Closest hit along `direction`. On a hit: the triangle and the barycentrics of the hit point.
+bool trace(vec3 origin, vec3 direction, out uint prim, out vec2 bary)
+{
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, origin, 0.0, direction, T_MAX);
+    while (rayQueryProceedEXT(rq)) {}
+    if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
+    {
+        prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, true));
+        bary = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+        return true;
+    }
+    prim = 0u;
+    bary = vec2(0.0);
+    return false;
+}
+
+// The hit point, the geometric normal facing the incoming ray, and the shading normal on the same side.
+// The shading normal is the interpolated smooth normal; if it is missing or degenerate, the face normal.
+void surface(uint prim, vec2 bary, vec3 direction, out vec3 p, out vec3 ng, out vec3 ns)
+{
+    const uint i0 = indices.i[3u * prim];
+    const uint i1 = indices.i[3u * prim + 1u];
+    const uint i2 = indices.i[3u * prim + 2u];
+    const vec3 p0 = vertex_position(i0);
+    const vec3 p1 = vertex_position(i1);
+    const vec3 p2 = vertex_position(i2);
+    const float w0 = 1.0 - bary.x - bary.y;
+    p = w0 * p0 + bary.x * p1 + bary.y * p2;
+
+    vec3 g = cross(p1 - p0, p2 - p0);
+    const float gl = length(g);
+    g = (gl > 0.0) ? g / gl : -direction;
+    if (dot(g, direction) > 0.0)
+    {
+        g = -g;   // seen from behind: shade as if the face pointed at the viewer
+    }
+    ng = g;
+
+    vec3 s = w0 * vertex_normal(i0) + bary.x * vertex_normal(i1) + bary.y * vertex_normal(i2);
+    const float sl = length(s);
+    if (!(sl > 1.0e-12) || isnan(sl) || isinf(sl))
+    {
+        s = g;
+    }
+    else
+    {
+        s /= sl;
+        if (dot(s, g) < 0.0)
+        {
+            s = -s;   // keep the shading normal on the side the ray arrived from
+        }
+    }
+    ns = s;
+}
+
+// Radiance along one camera ray, and whether the camera ray hit anything.
+vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
+{
+    const uint budget = frame.size.z;
+    vec3 throughput = vec3(1.0);
+    vec3 radiance = vec3(0.0);
     covered = false;
 
-    for (uint bounce = 0u; bounce <= budget; ++bounce)
+    // Segment 0 is the camera ray; segment k > 0 leaves the k-th hit. Hits 1 .. budget+1 scatter.
+    for (uint seg = 0u; seg <= budget + 1u; ++seg)
     {
-        float t;
-        int wall;
-        if (!closest_hit(origin, direction, t, wall))
+        uint prim;
+        vec2 bary;
+        if (!trace(origin, direction, prim, bary))
         {
-            break;   // a leak out of the box: the path ends and the estimate drops
+            if (seg > 0u)
+            {
+                radiance += throughput * frame.dome.rgb;   // left the scene: the dome
+            }
+            break;                                         // a camera miss stays black, alpha 0
         }
-        if (bounce == 0u)
+        if (seg == 0u)
         {
             covered = true;
         }
-        gathered += throughput;
-        if (bounce == budget)
+        if (seg == budget + 1u)
         {
-            break;
+            break;   // still inside the scene after the last allowed bounce: nothing
         }
-        throughput *= rho;
-        origin = clamp(origin + t * direction, vec3(INSET), vec3(1.0 - INSET));
-        direction = cosine_hemisphere(WALL_NORMAL[wall], rng);
+
+        vec3 p, ng, ns;
+        surface(prim, bary, direction, p, ng, ns);
+        throughput *= albedo.a[prim].rgb;
+
+        // Offset along the geometric normal, scaled with the magnitude of the position.
+        const float m = max(1.0, max(abs(p.x), max(abs(p.y), abs(p.z))));
+        origin = p + ng * (1.0e-4 * m);
+        direction = cosine_hemisphere(ns, rng);
+        if (dot(direction, ng) <= 0.0)
+        {
+            direction = normalize(direction - 2.0 * dot(direction, ng) * ng);   // below the face: mirror it up
+        }
     }
-    return gathered;
+    return radiance;
 }
 
 void main()
@@ -157,7 +213,8 @@ void main()
     const uint path_number = frame.pass.x * (width * height) + index;
     uint rng = mix32(frame.size.w + mix32(path_number + 0x9E3779B9u));
 
-    // Pixel -> normalised device coordinates. Row 0 is the bottom of the image (y = -1).
+    // Pixel -> normalised device coordinates, jittered uniformly inside the pixel (a one-pixel box).
+    // Row 0 is the bottom of the image (y = -1).
     const vec2 jitter = vec2(rand01(rng), rand01(rng));
     const vec2 ndc = 2.0 * ((vec2(pixel) + jitter) / vec2(float(width), float(height))) - 1.0;
 
@@ -180,6 +237,6 @@ void main()
     }
 
     bool covered;
-    const float gathered = furnace_path(origin, direction, rng, covered);
-    accum.sum[index] += vec4(frame.emissionRho.rgb * gathered, covered ? 1.0 : 0.0);
+    const vec3 radiance = path(origin, direction, rng, covered);
+    accum.sum[index] += vec4(radiance, covered ? 1.0 : 0.0);
 }

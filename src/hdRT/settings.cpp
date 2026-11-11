@@ -151,8 +151,6 @@ HdRTResolveFurnaceConfig(HdRenderSettingsMap const& delivered)
             std::vector<double> n;
             n = _JsonNumbers(text, "seed");     if (n.size() == 1) { cfg.seed = _ClampInt(n[0], 0, 2147483647); ++fromFile; }
             n = _JsonNumbers(text, "spp");      if (n.size() == 1) { cfg.spp = _ClampInt(n[0], 1, 65536); ++fromFile; }
-            n = _JsonNumbers(text, "rho");      if (n.size() == 1) { cfg.rho = float(n[0]); ++fromFile; }
-            n = _JsonNumbers(text, "emission"); if (n.size() == 3) { cfg.emission[0] = float(n[0]); cfg.emission[1] = float(n[1]); cfg.emission[2] = float(n[2]); ++fromFile; }
             n = _JsonNumbers(text, "bounces");  if (n.size() == 1) { cfg.bounces = _ClampInt(n[0], 0, 4096); ++fromFile; }
         }
         else if (*path)
@@ -164,30 +162,20 @@ HdRTResolveFurnaceConfig(HdRenderSettingsMap const& delivered)
     // Highest priority: what the application delivered as render settings.
     int fromSettings = 0;
     double d = 0.0;
-    double e[3] = { 0.0, 0.0, 0.0 };
     if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->seed))
         if (_AsDouble(*v, &d)) { cfg.seed = _ClampInt(d, 0, 2147483647); ++fromSettings; }
     if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->spp))
         if (_AsDouble(*v, &d)) { cfg.spp = _ClampInt(d, 1, 65536); ++fromSettings; }
-    if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->furnaceRho))
-        if (_AsDouble(*v, &d)) { cfg.rho = float(d); ++fromSettings; }
-    if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->furnaceEmission))
-        if (_AsVec3(*v, e)) { cfg.emission[0] = float(e[0]); cfg.emission[1] = float(e[1]); cfg.emission[2] = float(e[2]); ++fromSettings; }
     if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->bounces))
         if (_AsDouble(*v, &d)) { cfg.bounces = _ClampInt(d, 0, 4096); ++fromSettings; }
 
-    // Keep the physics sane whatever was typed in: a wall cannot reflect more than it receives.
-    cfg.rho = std::min(0.999f, std::max(0.0f, cfg.rho));
-    for (float& c : cfg.emission)
-        c = std::max(0.0f, c);
-
-    if (fromSettings == 5)
-        cfg.source = "render settings (5 of 5)";
+    if (fromSettings == 3)
+        cfg.source = "render settings (3 of 3)";
     else if (fromSettings > 0)
-        cfg.source = TfStringPrintf("render settings (%d of 5), %s for the rest", fromSettings,
+        cfg.source = TfStringPrintf("render settings (%d of 3), %s for the rest", fromSettings,
                                     fromFile > 0 ? "config file" : "defaults");
     else if (fromFile > 0)
-        cfg.source = TfStringPrintf("config file (%d of 5)", fromFile);
+        cfg.source = TfStringPrintf("config file (%d of 3)", fromFile);
     else
         cfg.source = "defaults";
 
@@ -195,9 +183,6 @@ HdRTResolveFurnaceConfig(HdRenderSettingsMap const& delivered)
         cfg.validation = (*v && *v != '0');
     if (const char* v = std::getenv("HOUDINIRT_ALLOW_SOFTWARE_DEVICE"))
         cfg.allowSoftwareDevice = (*v && *v != '0');
-    if (const char* v = std::getenv("HOUDINIRT_DEBUG_OPEN_FACE"))
-        if (*v >= '0' && *v <= '5' && v[1] == '\0')
-            cfg.openFace = *v - '0';
 
     return cfg;
 }

@@ -102,7 +102,8 @@ private:
 
     std::string _spvPath;
     HdRTFurnaceConfig _config;
-    std::shared_ptr<const HdRTWorldScene> _scene;
+    std::shared_ptr<const HdRTWorldScene> _scene;           // set by the render pass (thread stopped)
+    std::shared_ptr<const HdRTWorldScene> _uploadedScene;   // what the GPU holds; render thread only
 
     GfMatrix4d _viewMatrix;
     GfMatrix4d _projMatrix;

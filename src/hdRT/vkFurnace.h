@@ -1,4 +1,6 @@
-// vkFurnace.h - the GPU side of the step 3 delegate: a closed-box furnace traced with Vulkan ray queries.
+// vkFurnace.h - the GPU side of the delegate: the scene's acceleration structure and the path-tracing
+// kernel (shaders/furnace.comp), traced with Vulkan ray queries. (Named for step 3's furnace; kept to
+// keep the diff small.)
 //
 // This file and vkFurnace.cpp use Vulkan and the C++ standard library only (no USD, no Hydra), so the
 // kernel can be lifted out and run on its own. The Vulkan sequence is the one from step 2
@@ -23,9 +25,8 @@ struct HdRTVkFrame
     float invView[16] = {};         ///< camera space to world space
     float invProj[16] = {};         ///< normalised device coordinates to camera space
     bool orthographic = false;
-    float rho = 0.5f;               ///< wall albedo
-    float emission[3] = { 1.0f, 1.0f, 1.0f };
-    uint32_t bounces = 16;          ///< bounces after the first hit
+    float dome[3] = { 0.0f, 0.0f, 0.0f };   ///< uniform dome radiance collected by paths that leave the scene
+    uint32_t bounces = 16;          ///< diffuse bounces after the first hit
     uint32_t seed = 1;
 };
 
@@ -35,11 +36,10 @@ struct HdRTVkOptions
     std::string spvPath;                ///< the compiled shaders/furnace.comp
     bool validation = false;            ///< load VK_LAYER_KHRONOS_validation if it is installed
     bool allowSoftwareDevice = false;   ///< accept a CPU rasteriser (tests on machines without a GPU only)
-    int openFace = -1;                  ///< 0..5 leaves one wall of the cube out (a debugging aid)
 
     bool operator==(const HdRTVkOptions& o) const
     {
-        return spvPath == o.spvPath && validation == o.validation && allowSoftwareDevice == o.allowSoftwareDevice && openFace == o.openFace;
+        return spvPath == o.spvPath && validation == o.validation && allowSoftwareDevice == o.allowSoftwareDevice;
     }
     bool operator!=(const HdRTVkOptions& o) const { return !(*this == o); }
 };
@@ -52,11 +52,20 @@ public:
 
     /// Creates the Vulkan instance (with the validation layer when asked for and installed), picks a
     /// device that supports ray queries (a discrete GPU if there is one; a software device only when
-    /// options.allowSoftwareDevice says so), builds the unit-cube acceleration structure and the compute
-    /// pipeline. Returns false and fills *error on any failure. Safe to call again after Destroy().
+    /// options.allowSoftwareDevice says so) and the compute pipeline. No scene exists until SetScene().
+    /// Returns false and fills *error on any failure. Safe to call again after Destroy().
     bool Init(const HdRTVkOptions& options, std::string* error);
 
     bool IsReady() const;
+
+    /// Replaces the scene: one world-space triangle mesh. positions and normals hold 3 floats per vertex,
+    /// indices 3 per triangle, albedo 4 floats (rgba) per triangle. Builds one bottom-level structure and a
+    /// top-level structure with one identity instance, and waits for both. An empty mesh (no triangles)
+    /// leaves no scene: every pass then renders black with alpha 0. Call between passes, never during one.
+    bool SetScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
+                  const float* albedo, size_t triangleCount, std::string* error);
+
+    bool HasScene() const;
 
     /// Sets the image size and parameters for the passes that follow and zeroes the accumulation.
     bool BeginFrame(const HdRTVkFrame& frame, std::string* error);

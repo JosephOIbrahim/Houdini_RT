@@ -93,16 +93,12 @@ HdRTRenderDelegate::_Initialize()
 {
     // What a settings panel can show. The defaults are deliberately not written into the settings map:
     // ResolveFurnaceConfig() needs to know which values the application really set.
-    _settingDescriptors.resize(5);
+    _settingDescriptors.resize(3);
     _settingDescriptors[0] = { "Samples Per Pixel",
         HdRTRenderSettingsTokens->spp, VtValue(int(HdRTFurnaceConfig().spp)) };
     _settingDescriptors[1] = { "Random Number Seed",
         HdRTRenderSettingsTokens->seed, VtValue(int(HdRTFurnaceConfig().seed)) };
-    _settingDescriptors[2] = { "Furnace: Wall Albedo",
-        HdRTRenderSettingsTokens->furnaceRho, VtValue(float(HdRTFurnaceConfig().rho)) };
-    _settingDescriptors[3] = { "Furnace: Wall Emission",
-        HdRTRenderSettingsTokens->furnaceEmission, VtValue(GfVec3f(1.0f)) };
-    _settingDescriptors[4] = { "Diffuse Bounces",
+    _settingDescriptors[2] = { "Diffuse Bounces",
         HdRTRenderSettingsTokens->bounces, VtValue(int(HdRTFurnaceConfig().bounces)) };
 
     // std::atomic does not default-initialize; do so here.

@@ -25,3 +25,6 @@
 - The dome light is never visible to camera rays (camera misses are black, alpha 0), whatever domeLightCameraVisibility says.
 - Approved for the s4 exam before sealing: measured timeouts, an alpha-coverage gate, code-only source greps with required includes, first-render thread-order check, safe evidence fallbacks, a wider unset list, and bounces drawn from the nonce and reported as `hrt_bounces`.
 - The root folder is `D:\Houdini_RT` (was `D:\HoudiniRT`); product identifiers are unchanged.
+
+## 2026-11-11 (X8, live pause in Solaris, checked by Joe)
+- Live pause ok, menu yes, edit-while-paused safe, 22.0.429, 2026-11-11. On the step 3 build (`.claude/worktrees/s3-delegate-shell/build/plugin_stage`): HoudiniRT appears in the Solaris viewport renderer menu (no UsdRenderers.json entry needed); pause stops accumulation and resume continues; tumbling while paused is safe; switching the renderer away and back is clean. This closes the human check owed since s3 (build-spec.md line 43).

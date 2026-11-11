@@ -52,7 +52,7 @@ flowchart LR
 Hydra syncs each mesh and the dome light on Houdini's thread. The render pass then flattens the scene into one world-space mesh. The render thread uploads it to the GPU and runs **one compute kernel that traces every path with inline ray queries**. Nothing touches the GPU during sync, and the render thread can pause and resume at any pass.
 
 ```mermaid
-flowchart LR
+flowchart TD
   stage["USD stage"] --> host["husk or the Solaris viewport"]
   host --> sync["Sync on Houdini's thread<br/>meshes: HdMeshUtil, Hd_SmoothNormals<br/>dome: intensity, exposure, colour"]
   sync --> flat["Execute<br/>flatten to world space<br/>take the census"]

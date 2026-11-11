@@ -17,3 +17,11 @@
 
 ## 2026-10-05 (references for s3)
 - `third_party/openusd_hdEmbree/` is Pixar's example Hydra delegate (TOST licence): the template for `src/hdRT/`. `third_party/fragment_m3_check/` shows a working hermetic-hython + HDK exam. Read each README first. Adapt, do not link.
+
+## 2026-11-11 (Joe's decisions for s4, recorded by Claude)
+- s4 code is written by a Claude Code session (the s3 route) and landed with `_work/dev/land_step.mts`. Joe seals the s4 exam (separation of duties: Claude wrote the exam and writes the code).
+- CLAUDE.md:30 amended: acceleration structures are built on the render thread at the head of Render() from the snapshot Execute hands over; never in Sync; Execute makes no Vulkan calls (hdEmbree's _PreRenderSetup pattern).
+- The s3 furnace image is retired when s4 lands: `verify/s3_delegate.sh` is not expected to pass on integration afterwards, and no gate reruns it.
+- The dome light is never visible to camera rays (camera misses are black, alpha 0), whatever domeLightCameraVisibility says.
+- Approved for the s4 exam before sealing: measured timeouts, an alpha-coverage gate, code-only source greps with required includes, first-render thread-order check, safe evidence fallbacks, a wider unset list, and bounces drawn from the nonce and reported as `hrt_bounces`.
+- The root folder is `D:\Houdini_RT` (was `D:\HoudiniRT`); product identifiers are unchanged.

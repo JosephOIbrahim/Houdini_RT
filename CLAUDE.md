@@ -27,7 +27,7 @@ s4 mesh + camera sync (first light). `specs/build-spec.md` holds the acceptance 
 - **Vulkan validation layer silent.** Zero VUID lines in any log.
 - **No hardcoded device or queue indices.** Query, prefer a discrete GPU, never a software device.
 - **RAII or explicit teardown on every Vulkan object.** No leaks at exit.
-- **Acceleration structures are built in Execute, never in Sync.** Sync marks dirty.
+- **Acceleration structures are built on the render thread at the head of Render(), from the scene snapshot Execute hands over; never in Sync.** Sync stores CPU data and marks dirty; Execute makes no Vulkan calls. (Amended 2026-11-11, Joe.)
 - **Execute never blocks on the render thread.** Pause must really pause (Houdini pauses on edits).
 - **Mesh sync uses HdMeshUtil and Hd_SmoothNormals.** No hand-rolled triangulation.
 - **Texture-LUT mode for the BSDF** (`-DFURNACE_TEX_LUTS` / `OPENPBR_USE_TEXTURE_LUTS`). Embedded-array mode only as a diagnostic.

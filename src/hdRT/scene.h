@@ -11,6 +11,8 @@
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/gf/vec3i.h"
+#include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/path.h"
 

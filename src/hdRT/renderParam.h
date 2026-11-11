@@ -18,18 +18,24 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+class HdRTScene;
+
 ///
 /// \class HdRTRenderParam
 ///
-/// Passed to every prim during Sync(). Anything the render thread reads or writes (render buffers now,
-/// meshes from step 4) must call AcquireSceneForEdit() before it changes, so an edit never races a render.
+/// Passed to every prim during Sync(). Anything the render thread reads or writes (render buffers, and
+/// from step 4 the meshes and lights) must call AcquireSceneForEdit() before it changes, so an edit never
+/// races a render. Prims publish their CPU-side data into the scene it carries.
 ///
 class HdRTRenderParam final : public HdRenderParam
 {
 public:
-    HdRTRenderParam(HdRenderThread *renderThread, std::atomic<int> *sceneVersion)
-        : _renderThread(renderThread), _sceneVersion(sceneVersion)
+    HdRTRenderParam(HdRenderThread *renderThread, std::atomic<int> *sceneVersion, HdRTScene *scene)
+        : _renderThread(renderThread), _sceneVersion(sceneVersion), _scene(scene)
     {}
+
+    /// The delegate's scene, which meshes and lights publish into during Sync().
+    HdRTScene *GetScene() const { return _scene; }
 
     /// Stop the current render (it blocks until the render thread is idle) and mark the scene as edited.
     /// The render pass sees the new version on its next Execute and starts a fresh render.
@@ -42,6 +48,7 @@ public:
 private:
     HdRenderThread *_renderThread;
     std::atomic<int> *_sceneVersion;
+    HdRTScene *_scene;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

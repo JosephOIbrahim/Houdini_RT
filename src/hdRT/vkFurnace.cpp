@@ -10,6 +10,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -124,6 +125,8 @@ struct HdRTVkFurnace::Impl
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     AsApi as;
     VkDeviceSize scratchAlignment = 1;
+    uint64_t maxPrimitiveCount = 0;        // VkPhysicalDeviceAccelerationStructurePropertiesKHR
+    uint32_t maxStorageBufferRange = 0;    // VkPhysicalDeviceLimits
 
     // The scene: one world-space mesh (SetScene). Positions double as the BLAS build input.
     Buffer sceneVb, sceneNb, sceneIb, sceneAlbedo, instanceBuffer;
@@ -152,7 +155,9 @@ struct HdRTVkFurnace::Impl
                                                  const VkDebugUtilsMessengerCallbackDataEXT* data, void* user);
 
     uint32_t FindMemoryType(uint32_t typeBits, VkMemoryPropertyFlags wanted) const;
-    bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads = false);
+    // gpuReads: the kernel reads it on every hit; prefer device-local memory the host can write (resizable BAR).
+    bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads = false,
+                      bool gpuReads = false);
     void DestroyBuffer(Buffer& b);
     VkDeviceAddress BufferAddress(VkBuffer buffer) const;
     bool Submit(std::string* error);
@@ -206,7 +211,8 @@ uint32_t HdRTVkFurnace::Impl::FindMemoryType(uint32_t typeBits, VkMemoryProperty
 
 // cpuReads: the CPU reads this buffer back, so ask for cached host memory. Plain host-visible memory on a
 // discrete GPU is usually write-combined, and reading that is tens of times slower than normal memory.
-bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads)
+bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads,
+                                       bool gpuReads)
 {
     Buffer b;
     b.size = size;
@@ -227,6 +233,8 @@ bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usa
     ai.memoryTypeIndex = UINT32_MAX;
     if (hostVisible && cpuReads)
         ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    else if (hostVisible && gpuReads)
+        ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostFlags | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (ai.memoryTypeIndex == UINT32_MAX)
         ai.memoryTypeIndex = FindMemoryType(req.memoryTypeBits, hostVisible ? hostFlags : VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
     if (ai.memoryTypeIndex == UINT32_MAX)
@@ -462,6 +470,8 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     props2.pNext = &asProps;
     vkGetPhysicalDeviceProperties2(phys, &props2);
     scratchAlignment = asProps.minAccelerationStructureScratchOffsetAlignment;
+    maxPrimitiveCount = asProps.maxPrimitiveCount;
+    maxStorageBufferRange = props2.properties.limits.maxStorageBufferRange;
 
     uint32_t familyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &familyCount, nullptr);
@@ -545,24 +555,30 @@ bool HdRTVkFurnace::Impl::BuildScene(const float* positions, const float* normal
     DestroyScene();
     if (triangleCount == 0 || vertexCount == 0)
         return true;   // no geometry: no scene, every pass renders black with alpha 0
-    if (vertexCount > size_t(UINT32_MAX) || triangleCount > size_t(UINT32_MAX) / 3)
-        return _Fail(error, "the scene is too large for 32-bit indices");
+    // The shader indexes 3 floats per vertex and 3 indices per triangle in 32-bit arithmetic.
+    if (vertexCount > size_t(UINT32_MAX) / 3 || triangleCount > size_t(UINT32_MAX) / 3)
+        return _Fail(error, "the scene is too large for 32-bit indexing in the kernel");
+    if (maxPrimitiveCount && uint64_t(triangleCount) > maxPrimitiveCount)
+        return _Fail(error, "the scene has more triangles than this device allows in one acceleration structure");
 
     // Positions are a build input and a storage buffer (the shader interpolates the hit point from them);
-    // the rest are storage buffers only. Host-visible: the scene is small and written once per edit.
+    // the rest are storage buffers only. Written once per edit from the host; placed in device-local memory
+    // the host can write when the device offers it (resizable BAR), else in host memory.
     const VkBufferUsageFlags inputUsage =
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     const VkBufferUsageFlags geomUsage = inputUsage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     const VkDeviceSize vbBytes = VkDeviceSize(vertexCount) * 3 * sizeof(float);
     const VkDeviceSize ibBytes = VkDeviceSize(triangleCount) * 3 * sizeof(uint32_t);
     const VkDeviceSize abBytes = VkDeviceSize(triangleCount) * 4 * sizeof(float);
-    if (!CreateBuffer(vbBytes, geomUsage, true, &sceneVb, error))
+    if (maxStorageBufferRange && std::max(std::max(vbBytes, ibBytes), abBytes) > VkDeviceSize(maxStorageBufferRange))
+        return _Fail(error, "a scene buffer is larger than this device's maxStorageBufferRange");
+    if (!CreateBuffer(vbBytes, geomUsage, true, &sceneVb, error, false, true))
         return false;
-    if (!CreateBuffer(vbBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneNb, error))
+    if (!CreateBuffer(vbBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneNb, error, false, true))
         return false;
-    if (!CreateBuffer(ibBytes, geomUsage, true, &sceneIb, error))
+    if (!CreateBuffer(ibBytes, geomUsage, true, &sceneIb, error, false, true))
         return false;
-    if (!CreateBuffer(abBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneAlbedo, error))
+    if (!CreateBuffer(abBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneAlbedo, error, false, true))
         return false;
     std::memcpy(sceneVb.mapped, positions, size_t(vbBytes));
     std::memcpy(sceneNb.mapped, normals, size_t(vbBytes));

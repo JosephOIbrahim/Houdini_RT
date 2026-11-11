@@ -33,7 +33,7 @@ struct HdRTFurnaceConfig
                                                 ///< value must never equal a default (DECISIONS.md 2026-10-06)
     bool validation = false;                    ///< HOUDINIRT_VALIDATION=1 asks for the Vulkan validation layer
     bool allowSoftwareDevice = false;           ///< HOUDINIRT_ALLOW_SOFTWARE_DEVICE=1: tests on machines without a GPU
-    std::string source = "defaults";            ///< where the five furnace values came from (log, stats)
+    std::string source = "defaults";            ///< where seed, spp and bounces came from (log, stats)
 
     bool operator==(const HdRTFurnaceConfig& o) const
     {

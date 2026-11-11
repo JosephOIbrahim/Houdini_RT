@@ -12,7 +12,8 @@
 //   - The first hit plus `bounces` further diffuse bounces. A path that leaves the scene collects
 //     throughput * dome radiance. A path still inside after its last allowed bounce contributes nothing.
 //   - Lambertian: bounces are cosine-weighted about the shading normal, so each one multiplies the
-//     throughput by exactly the albedo. No clamping, no Russian roulette, no denoiser.
+//     throughput by exactly the albedo; a sample below the geometric face ends the path. No clamping,
+//     no Russian roulette, no denoiser.
 //   - A face seen from behind shades as if its normal pointed at the viewer, and blocks light like any
 //     other (Karma does this whatever doubleSided says).
 //
@@ -189,10 +190,14 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         // Offset along the geometric normal, scaled with the magnitude of the position.
         const float m = max(1.0, max(abs(p.x), max(abs(p.y), abs(p.z))));
         origin = p + ng * (1.0e-4 * m);
+        // Cosine about the shading normal. A sample that falls below the geometric face carries no light
+        // (the Lambert BRDF with a shading normal is zero there), so the path ends. Measured against Karma
+        // CPU on nonce 101 (C6, 2026-11-11): mirroring such samples back up added a +0.1% bias and doubled
+        // the FLIP gap; ending the path or sampling about the face normal both match Karma within noise.
         direction = cosine_hemisphere(ns, rng);
         if (dot(direction, ng) <= 0.0)
         {
-            direction = normalize(direction - 2.0 * dot(direction, ng) * ng);   // below the face: mirror it up
+            break;
         }
     }
     return radiance;

@@ -26,8 +26,10 @@
 
 #include "settings.h"
 #include "vkFurnace.h"
+#include "world.h"
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -39,6 +41,7 @@ struct HdRTRenderStats
 {
     int seed = 0;
     int spp = 0;
+    int bounces = 0;                ///< the houdinirt:bounces value this render used
     int completedSamples = 0;
     std::string device;             ///< Vulkan deviceName, empty until the GPU has been initialised
     std::string settingsSource;     ///< where the furnace values came from
@@ -46,6 +49,7 @@ struct HdRTRenderStats
     int validationErrors = 0;
     double renderSeconds = 0.0;
     std::string error;              ///< empty unless the last render failed
+    HdRTCensus census;              ///< what Hydra synced, as of the last SetScene
 };
 
 class HdRTRenderer final
@@ -60,6 +64,8 @@ public:
     // ---- called by the render pass on the app thread, always with the render thread stopped ---------
 
     void SetConfig(const HdRTFurnaceConfig& config);
+    /// The world-space scene the next render uses (uploaded on the render thread, C5), and its census.
+    void SetScene(std::shared_ptr<const HdRTWorldScene> scene);
     void SetCamera(const GfMatrix4d& viewMatrix, const GfMatrix4d& projMatrix);
 
     /// The pixels to render, y-down as Hydra gives it. Must lie inside the render buffers.
@@ -96,6 +102,7 @@ private:
 
     std::string _spvPath;
     HdRTFurnaceConfig _config;
+    std::shared_ptr<const HdRTWorldScene> _scene;
 
     GfMatrix4d _viewMatrix;
     GfMatrix4d _projMatrix;

@@ -52,6 +52,7 @@ add_library(hdRT SHARED
     settings.cpp
     mesh.cpp
     light.cpp
+    world.cpp
     vkFurnace.cpp)
 add_dependencies(hdRT hdRT_shaders)
 target_link_libraries(hdRT PRIVATE Houdini HoudiniThirdParty)

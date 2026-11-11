@@ -173,7 +173,7 @@ HdRTResolveFurnaceConfig(HdRenderSettingsMap const& delivered)
         if (_AsDouble(*v, &d)) { cfg.rho = float(d); ++fromSettings; }
     if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->furnaceEmission))
         if (_AsVec3(*v, e)) { cfg.emission[0] = float(e[0]); cfg.emission[1] = float(e[1]); cfg.emission[2] = float(e[2]); ++fromSettings; }
-    if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->furnaceBounces))
+    if (const VtValue* v = _Find(delivered, HdRTRenderSettingsTokens->bounces))
         if (_AsDouble(*v, &d)) { cfg.bounces = _ClampInt(d, 0, 4096); ++fromSettings; }
 
     // Keep the physics sane whatever was typed in: a wall cannot reflect more than it receives.

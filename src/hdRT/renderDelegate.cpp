@@ -102,8 +102,8 @@ HdRTRenderDelegate::_Initialize()
         HdRTRenderSettingsTokens->furnaceRho, VtValue(float(HdRTFurnaceConfig().rho)) };
     _settingDescriptors[3] = { "Furnace: Wall Emission",
         HdRTRenderSettingsTokens->furnaceEmission, VtValue(GfVec3f(1.0f)) };
-    _settingDescriptors[4] = { "Furnace: Bounces",
-        HdRTRenderSettingsTokens->furnaceBounces, VtValue(int(HdRTFurnaceConfig().bounces)) };
+    _settingDescriptors[4] = { "Diffuse Bounces",
+        HdRTRenderSettingsTokens->bounces, VtValue(int(HdRTFurnaceConfig().bounces)) };
 
     // std::atomic does not default-initialize; do so here.
     _sceneVersion.store(0);
@@ -268,6 +268,17 @@ HdRTRenderDelegate::GetRenderStats() const
     // What this render actually used. verify/s3_delegate.sh compares hrt_seed with the seed it chose.
     stats["hrt_seed"] = s.seed;
     stats["hrt_spp"] = s.spp;
+    // The bounce budget this render used; verify/s4_firstlight.sh compares it with the count it drew.
+    stats["hrt_bounces"] = s.bounces;
+    // The translation census of what Hydra synced; verify/s4_firstlight.sh compares it with its own census
+    // of the stage. Counts are ints, the box is double (husk keeps both types in the EXR header).
+    stats["hrt_mesh_count"] = s.census.meshes;
+    stats["hrt_triangle_count"] = s.census.triangles;
+    static const char* axes[3] = { "x", "y", "z" };
+    for (int k = 0; k < 3; ++k) {
+        stats[std::string("hrt_bbox_min_") + axes[k]] = s.census.bboxMin[k];
+        stats[std::string("hrt_bbox_max_") + axes[k]] = s.census.bboxMax[k];
+    }
     stats["hrt_device"] = s.device;
     stats["hrt_settings_source"] = s.settingsSource;
     stats["hrt_validation_active"] = s.validationActive;

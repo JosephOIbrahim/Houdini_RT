@@ -33,7 +33,7 @@ reference files and the licence text are in `third_party/sascha_willems_vulkan/`
 
 ## New in this project
 
-`scene.h`, `vkFurnace.h`, the rest of `vkFurnace.cpp`, `shaders/furnace.comp`, `settings.h`, `settings.cpp`, `log.h`,
+`scene.h`, `world.h`, `world.cpp`, `vkFurnace.h`, the rest of `vkFurnace.cpp`, `shaders/furnace.comp`, `settings.h`, `settings.cpp`, `log.h`,
 `test/furnace_standalone.cpp`, `CMakeLists.txt`, `plugInfo.json`, `README.md`.
 
 No code under a copyleft licence is used, linked or was consulted.

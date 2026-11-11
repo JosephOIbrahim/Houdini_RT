@@ -12,6 +12,7 @@
 
 #include "log.h"
 #include "renderDelegate.h"
+#include "world.h"
 
 #include "pxr/base/tf/enum.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -109,18 +110,32 @@ HdRTRenderPass::_Execute(HdRenderPassStateSharedPtr const& renderPassState,
 {
     ++_executeCount;
 
-    // Determine whether the scene has changed since the last time we rendered.
+    HdRTRenderDelegate *renderDelegate =
+        static_cast<HdRTRenderDelegate*>(GetRenderIndex()->GetRenderDelegate());
+
+    // Determine whether the scene has changed since the last time we rendered. If it has (or on the
+    // first Execute), flatten what Hydra synced into one world-space mesh and hand it to the renderer.
+    // This is CPU work only; the GPU upload happens on the render thread (CLAUDE.md:30).
     bool needStartRender = false;
     int currentSceneVersion = _sceneVersion->load();
-    if (_lastSceneVersion != currentSceneVersion) {
+    if (_lastSceneVersion != currentSceneVersion || !_sceneHandedOver) {
         needStartRender = true;
         _lastSceneVersion = currentSceneVersion;
+        _sceneHandedOver = true;
+
+        std::shared_ptr<const HdRTWorldScene> world =
+            HdRTFlattenScene(renderDelegate->GetScene().Snapshot());
+        const HdRTCensus& c = world->census;
+        HDRT_DEBUG("scene v%d: %d meshes, %d triangles (%zu uploaded), box [%.6f %.6f %.6f .. %.6f %.6f %.6f], dome (%.6f, %.6f, %.6f)",
+                   currentSceneVersion, c.meshes, c.triangles, world->TriangleCount(),
+                   c.bboxMin[0], c.bboxMin[1], c.bboxMin[2], c.bboxMax[0], c.bboxMax[1], c.bboxMax[2],
+                   double(world->dome[0]), double(world->dome[1]), double(world->dome[2]));
+        _renderThread->StopRender();
+        _renderer->SetScene(std::move(world));
     }
 
     // Likewise the render settings. The furnace parameters are worked out again whenever the settings
     // version moves, and a new render starts only if they really changed.
-    HdRTRenderDelegate *renderDelegate =
-        static_cast<HdRTRenderDelegate*>(GetRenderIndex()->GetRenderDelegate());
     int currentSettingsVersion = renderDelegate->GetRenderSettingsVersion();
     if (_lastSettingsVersion != currentSettingsVersion) {
         const bool first = (_lastSettingsVersion == 0);

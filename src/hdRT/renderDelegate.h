@@ -69,6 +69,9 @@ public:
     /// HOUDINIRT_S3_CONFIG, then defaults. Called by the render pass on the app thread.
     HdRTFurnaceConfig ResolveFurnaceConfig() const;
 
+    /// The CPU-side scene that meshes and lights publish into. The render pass snapshots it in Execute().
+    HdRTScene const& GetScene() const { return _scene; }
+
     VtDictionary GetRenderStats() const override;
 
     // ---- pause and resume ----------------------------------------------------------------------

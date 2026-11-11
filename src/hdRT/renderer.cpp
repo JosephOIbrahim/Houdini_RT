@@ -87,6 +87,14 @@ HdRTRenderer::SetConfig(const HdRTFurnaceConfig& config)
 }
 
 void
+HdRTRenderer::SetScene(std::shared_ptr<const HdRTWorldScene> scene)
+{
+    _scene = std::move(scene);
+    std::lock_guard<std::mutex> lock(_statsMutex);
+    _stats.census = _scene ? _scene->census : HdRTCensus();
+}
+
+void
 HdRTRenderer::SetCamera(const GfMatrix4d& viewMatrix, const GfMatrix4d& projMatrix)
 {
     _viewMatrix = viewMatrix;
@@ -280,6 +288,7 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
         std::lock_guard<std::mutex> lock(_statsMutex);
         _stats.seed = _config.seed;
         _stats.spp = _config.spp;
+        _stats.bounces = _config.bounces;
         _stats.completedSamples = 0;
         _stats.settingsSource = _config.source;
         _stats.error.clear();
@@ -341,9 +350,9 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
     }
 
     HdRTLog("seed=%d spp=%d device=%s", _config.seed, _config.spp, _gpu.DeviceName().c_str());
-    HdRTLog("furnace rho=%g emission=(%g, %g, %g) bounces=%d, %dx%d, values from %s",
-            double(_config.rho), double(_config.emission[0]), double(_config.emission[1]), double(_config.emission[2]),
-            _config.bounces, dwW, dwH, _config.source.c_str());
+    HdRTLog("bounces=%d, %dx%d, values from %s; test scene: furnace rho=%g emission=(%g, %g, %g)",
+            _config.bounces, dwW, dwH, _config.source.c_str(),
+            double(_config.rho), double(_config.emission[0]), double(_config.emission[1]), double(_config.emission[2]));
 
     HdRTLog("render thread start");
 

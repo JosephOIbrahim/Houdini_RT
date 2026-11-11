@@ -72,6 +72,7 @@ private:
 
     // The last scene version we rendered with.
     int _lastSceneVersion;
+    bool _sceneHandedOver = false;   // the first Execute always hands a scene over
 
     // The last settings version we rendered with, and the furnace parameters it resolved to.
     int _lastSettingsVersion;

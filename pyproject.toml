@@ -1,0 +1,27 @@
+# Packaging metadata for the pure-Python runtime package only.
+#
+# `rt_runtime` is the only importable Python package in this tree. The Houdini
+# integration files (houdini/**, rt_toggle.json, the panel/shelf XML) are NOT
+# distributed through pip; they ship in the release zip produced by
+# tools/build_release.py (dist/houdini-rt-toggle-<version>.zip).
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "houdini-rt-toggle"
+version = "0.1.0"
+description = "Pure-Python on/off switch for the HoudiniRT runtime toggle"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Myth and Logic" }]
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+]
+
+[tool.setuptools]
+packages = ["rt_runtime"]

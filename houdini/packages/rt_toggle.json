@@ -1,0 +1,11 @@
+{
+    "enable": true,
+    "show": true,
+    "env": [
+        {
+            "var": "PYTHONPATH",
+            "value": "$HOUDINI_RT_ROOT/extensions/rt_toggle",
+            "method": "append"
+        }
+    ]
+}

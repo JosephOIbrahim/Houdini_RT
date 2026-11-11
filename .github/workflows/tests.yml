@@ -1,0 +1,177 @@
+# CI for the RT Toggle extension scaffold (houdini-rt-toggle).
+#
+# What this workflow covers:
+#   - the test suite on CPython 3.12 and 3.13
+#   - parse validity of every shipped Houdini surface file
+#   - absence of machine-specific absolute paths and secret-shaped tokens
+#
+# What it cannot cover: Houdini itself is not installed on a GitHub runner, so
+# nothing that needs `hou`, the Qt panel host, the shelf loader, or the
+# HoudiniRT Python 3.14 distribution is exercised here. Those paths are checked
+# by hand on a real workstation (see verification/RUN.md).
+#
+# Action versions are the documented majors: actions/checkout@v4 and
+# actions/setup-python@v5.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+
+# Nothing in this workflow writes back to the repository.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Tests, once per supported interpreter. 3.13 matters because Houdini
+  # 22.0.429 embeds Python 3.13; 3.12 is the older floor we still support.
+  # ---------------------------------------------------------------------------
+  pytest:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      # Report both interpreters even if one fails; a 3.13-only failure is the
+      # interesting signal and should not be hidden by 3.12 passing.
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      # The suite fakes `hou` (tests/fake_hou.py), so no Houdini is required.
+      # -p no:cacheprovider keeps the run free of .pytest_cache artefacts.
+      - name: Run the test suite
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  # ---------------------------------------------------------------------------
+  # Static checks. These do not depend on the interpreter version, so they run
+  # once instead of in both matrix legs.
+  # ---------------------------------------------------------------------------
+  surface-checks:
+    name: surface validation and safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # A malformed .pypanel, .shelf, .xml or .json breaks Houdini at load time
+      # with a much less readable error than ElementTree/json give us here.
+      - name: Validate every XML, .pypanel, .shelf and JSON file
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+
+          XML_SUFFIXES = {".xml", ".pypanel", ".shelf"}
+          JSON_SUFFIXES = {".json"}
+          # Caches are never committed; skipped so a local run behaves like CI.
+          SKIP_DIRS = {".git", ".pytest_cache", "__pycache__", ".benchmarks"}
+
+          counts = {".xml": 0, ".pypanel": 0, ".shelf": 0, ".json": 0}
+          errors = []
+
+          for root, dirs, files in os.walk("."):
+              dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+              for name in sorted(files):
+                  path = os.path.join(root, name)
+                  suffix = os.path.splitext(name)[1].lower()
+                  if suffix in XML_SUFFIXES:
+                      try:
+                          ET.parse(path)
+                          counts[suffix] += 1
+                      except ET.ParseError as exc:
+                          errors.append(f"{path}: XML parse error: {exc}")
+                  elif suffix in JSON_SUFFIXES:
+                      try:
+                          with open(path, encoding="utf-8") as handle:
+                              json.load(handle)
+                          counts[suffix] += 1
+                      except (OSError, ValueError) as exc:
+                          errors.append(f"{path}: JSON parse error: {exc}")
+
+          print("parsed: " + ", ".join(f"{k} x{v}" for k, v in counts.items()))
+
+          # Guard against walking the wrong directory: each surface type that
+          # ships with the extension must be present at least once.
+          missing = [suffix for suffix, count in counts.items() if count == 0]
+          if missing:
+              errors.append("no files found for: " + ", ".join(sorted(missing)))
+
+          if errors:
+              print("\n".join(errors), file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      # Machine-specific absolute paths make the extension unusable on any
+      # other machine; secret-shaped tokens must never be committed.
+      - name: Reject machine-specific paths and secret-shaped tokens
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "Not a git work tree; cannot enumerate tracked files." >&2
+            exit 2
+          fi
+
+          # How the patterns are written, and why:
+          #
+          # * Paths accept either separator, because both "E:\..." and "E:/..."
+          #   forms occur on Windows; the drive letter is followed by a class.
+          # * Secret tokens must be key-shaped. A bare "sk-" also matches
+          #   ordinary words like "task-runner", so "sk-" may not be preceded
+          #   by a letter and must be followed by key characters.
+          # * "ANTHROPIC_API_KEY[=]" uses a class for the "=" so this file
+          #   does not match its own pattern while being scanned. The path
+          #   patterns are safe for the same reason: this file spells them
+          #   with a class instead of a literal separator.
+          #
+          # Allowed placeholders work by construction: "%HOUDINI_RT_ROOT%" and
+          # "%USERPROFILE%" carry no drive letter, so the path patterns never
+          # see them. Prefer those over absolute paths in shipped files.
+          pattern='E:[\\/]Myth_and_Logic|C:[\\/]Users[\\/]User|apikey_[A-Za-z0-9]{8,}|gho_[A-Za-z0-9]{20,}|(^|[^[:alnum:]])sk-[A-Za-z0-9_-]{20,}|ANTHROPIC_API_KEY[=]'
+
+          status=0
+          while IFS= read -r -d '' file; do
+            # git ls-files emits bare paths; normalise "./x" just in case.
+            file="${file#./}"
+            case "$file" in
+              # Never committed, but harmless to skip if present locally.
+              .pytest_cache/*|*/__pycache__/*|*.pyc) continue ;;
+              # The release audit necessarily contains the patterns it
+              # searches for (same self-exclusion its docstring documents).
+              # Everything else, including this workflow file, is scanned.
+              tools/audit_release.py) continue ;;
+            esac
+            # -I skips binary files, -n prints the line number.
+            if grep -nIE "$pattern" -- "$file"; then
+              echo "::error file=$file::machine-specific path or secret-shaped token"
+              status=1
+            fi
+          done < <(git ls-files -z)
+
+          if [ "$status" -ne 0 ]; then
+            echo "Failing: replace the flagged paths with %HOUDINI_RT_ROOT% or %USERPROFILE%, or remove the secret-shaped token."
+            exit 1
+          fi
+          echo "Clean: no machine-specific absolute paths or secret-shaped tokens in tracked files."

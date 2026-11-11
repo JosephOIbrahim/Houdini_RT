@@ -1,0 +1,17 @@
+# Python bytecode and caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.benchmarks/
+
+# Runtime state written by the toggle
+.rt_toggle_state.json
+
+# Packaging / virtual environments
+dist/
+*.egg-info/
+.venv/
+
+# Editor and IDE settings
+.idea/
+.vscode/

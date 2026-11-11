@@ -45,11 +45,13 @@ an independent reference the code under test cannot produce, evidence to
 **Boundary:** Camera and mesh may be hardcoded test values; no real scene sync yet; viewport interactivity is not measured.
 
 ## s4-first-light
-**Deliverable:** Mesh and camera sync from Hydra; the usd-wg Teapot under one dome light renders through the delegate and matches Karma CPU within tolerance.
-**Scripted acceptance** (`verify/s4_firstlight.sh` — to be sealed):
-- Mesh sync goes through `HdMeshUtil` (triangulation, face-varying primvars) and `Hd_SmoothNormals` (grep-enforced, 17).
-- Translation census: prim count, triangle count and bounding box reported by the delegate match the stage read through `pxr.Usd` (16).
-- Exposure invariance: doubling dome intensity doubles mean beauty within 0.5% (16).
-- Beauty vs Karma CPU (husk, high spp, no denoiser), both EXRs log-encoded, FLIP 99th percentile under the sealed threshold; camera, light scale and tint perturbed by the seed (16).
-- Header conventions via RETINA T0; metrics via RETINA T1 (Synapse, Joe's own code).
-**Boundary:** No textures, no instancing, no importance-sampled dome, no denoiser, no edits while rendering.
+**Deliverable:** Mesh and camera sync from Hydra; the usd-wg Utah teapot (CC0, `third_party/usd_wg_teapot/`, sha256-pinned) and a polygon table under one uniform dome light render through the delegate and match Karma CPU.
+**Scripted acceptance** (`verify/s4_firstlight.sh`, sealed 2026-11-11; its header is the full contract):
+- Mesh sync goes through `HdMeshUtil::ComputeTriangleIndices` and `Hd_SmoothNormals::ComputeSmoothNormals`, checked in C++ code with comments and `#if 0` blocks removed, and the two HDK headers must be included (17). Face-varying primvars are not exercised in s4.
+- The nonce draws the scene: teapot pose with a non-uniform scale, a 9- to 14-sided table, camera orbit and focal length, both albedos, the dome's intensity, exposure and tint, and the bounce count (6, 7, 9, 10, 11 or 12). Settings `houdinirt:seed`, `houdinirt:spp` and `houdinirt:bounces` arrive as render settings.
+- Translation census: mesh count, triangle count and world bounding box, plus `hrt_bounces`, reported through GetRenderStats, match the stage read through `pxr.Usd` and the drawn bounce count (16).
+- The delegate's image is finite and premultiplied, and the dome is never visible to the camera (a miss is black, alpha 0). Exposure invariance: doubling dome intensity doubles mean beauty within 0.5% (16).
+- Beauty vs Karma CPU (husk, 2,048 samples, no denoiser, one-pixel box), same stage: mean of the fully covered pixels within 1.0% per channel; FLIP 99th percentile, after compositing over the dome and log-encoding 12 stops, at most 0.045; mean alpha difference over the frame at most 0.0004 (16).
+- Validation layer proven active and silent (14); seed and spp echoed and a discrete GPU named (15); render-thread start before stop in the first render (17).
+- RETINA T0/T1 are not part of the gate: the exam stays hermetic (repo + Houdini only). They may run beside it as a non-gating witness.
+**Boundary:** No textures, no materials beyond Lambert albedo from `displayColor`, no instancing, no importance-sampled dome, no denoiser, no edits while rendering. Bounce counting beyond `hrt_bounces` and smooth vs flat normals are not visible in this picture; the first is proved against Karma before landing, the second waits for a directional light (s5).

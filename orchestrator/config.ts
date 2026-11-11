@@ -47,9 +47,11 @@ export const CONFIG = {
   // Failure routing. Rules decide first; Jev advises. See router.ts for the policy.
   router: {
     mode: env("NIGHT_ROUTER", "act"),   // off | shadow | advise | act
-    model: "jev-latest",
+    model: "jev-1.14.0", // pinned so a Jev release can't change routing between nights; bump on purpose
     act: 0.9,        // Jev probability needed (with a rule signal) to stop a milestone early
-    lean: 0.5,       // Jev probability needed to add a hint to the ticket
+    yes: 0.7,        // Noul at or above this = yes band (adds a ticket hint)
+    no: 0.3,         // Noul at or below this = no band; between yes and no = unclear (no hint)
+    lean: 0.5,       // probability of fix_scope's chosen option needed to treat the scope as known
     streak: 3,       // same failing stage this many rounds running = stalled (rule)
     timeoutMs: 8000,
   },

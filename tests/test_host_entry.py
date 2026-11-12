@@ -110,9 +110,21 @@ def test_run_turn_shaped_entry_point_is_invoked_with_doubles(tmp_path, monkeypat
     monkeypatch.syspath_prepend(str(tmp_path))
 
     result = host_stub._invoke_entry_point(
-        "entry_turn.run", {"prompt": "hello sidecar"}
+        "entry_turn.run",
+        {"prompt": "hello sidecar", "state_dir": str(tmp_path)},
     )
 
     assert result["status"] == "called"
     assert result["result_status"] == "ok"
     assert sentinel.read_text(encoding="utf-8") == "hello sidecar"
+
+
+def test_guarded_run_turn_returns_complete(tmp_path):
+    result = host_stub._invoke_entry_point(
+        "synapse.cognitive.agent_loop.run_turn",
+        {"state_dir": str(tmp_path), "prompt": "ping"},
+    )
+
+    assert result["status"] == "called"
+    assert result["result_status"] == "complete"
+    assert (tmp_path / "model_access.json").is_file()

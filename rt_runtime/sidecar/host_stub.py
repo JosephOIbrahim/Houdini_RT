@@ -43,7 +43,6 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -216,25 +215,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-class _NoopMessages:
-    """Minimal ``anthropic`` messages client for a startup payload probe."""
-
-    def create(self, **kwargs: Any) -> Any:
-        return SimpleNamespace(
-            stop_reason="end_turn",
-            content=[],
-            usage=SimpleNamespace(input_tokens=0, output_tokens=0),
-            model=kwargs.get("model"),
-        )
-
-
-class _NoopClient:
-    """A client shaped like ``anthropic.Anthropic`` with no network."""
-
-    def __init__(self) -> None:
-        self.messages = _NoopMessages()
-
-
 def _resolve_entry_point(spec: str) -> Any:
     """Import ``module.attr`` and return the callable."""
     module_name, _, attr = str(spec).rpartition(".")
@@ -278,13 +258,66 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
             result = target(context)
         elif required_names == ["client", "dispatcher", "user_prompt"]:
             # The named payload (synapse.cognitive.agent_loop.run_turn) needs a
-            # model client, a dispatcher and a prompt. Use a no-network client
-            # and an empty test dispatcher for the startup probe; the guarded
-            # SDK reports its own status instead of sending project content.
+            # model client, a dispatcher and a prompt. Build a guarded client
+            # with a no-network transport and a sidecar-scoped policy that
+            # approves exactly this model and endpoint. The turn is real
+            # (the agent loop runs), but the model response is local.
+            from synapse import model_access
+            from synapse.cognitive.agent_loop import AgentTurnConfig
             from synapse.cognitive.dispatcher import Dispatcher
 
+            model = str(AgentTurnConfig().model)
+            base = str(
+                os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com"
+            ).rstrip("/")
+            endpoint = base + "/v1/messages"
+            state_dir = Path(str(context.get("state_dir") or "."))
+            policy_path = state_dir / "model_access.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "mode": "ask",
+                        "approved_models": [
+                            {
+                                "provider": "claude",
+                                "model": model,
+                                "endpoint": endpoint,
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            os.environ["SYNAPSE_MODEL_POLICY"] = os.fspath(policy_path)
+
+            http = model_access.sdk_http_module()
+
+            def _probe_response(request: Any) -> Any:  # noqa: ARG001
+                return http.Response(
+                    200,
+                    json={
+                        "id": "msg_sidecar_probe",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": model,
+                        "content": [
+                            {"type": "text", "text": "sidecar payload check ok"}
+                        ],
+                        "stop_reason": "end_turn",
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                )
+
+            client = model_access.make_anthropic_client(
+                "offline-sidecar-probe",
+                transport=http.MockTransport(_probe_response),
+            )
             prompt = str(context.get("prompt") or "sidecar payload check")
-            result = target(_NoopClient(), Dispatcher(is_testing=True), prompt)
+            result = target(client, Dispatcher(is_testing=True), prompt)
         else:
             names = ", ".join(required_names)
             log(f"entry point {spec} needs arguments ({names}); not invoked")

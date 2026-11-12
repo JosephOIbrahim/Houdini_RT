@@ -86,8 +86,24 @@ state, not a button on a node.
 Radial menus are supported in the **3D viewer and the network editor** and are
 assigned in the Radial Menu Editor (`basics/radialmenus`). They are the fastest
 path once learned, and the only native surface that can show a state tick next
-to an action. Not implemented yet; it is the next surface after the HUD recipe
-is proven.
+to an action.
+
+`houdini/rt_radial.py` builds the menu: **RT Toggle** at the top with a check
+that reflects sidecar state, **RT Turn** on the right, **RT Turn Cancel** on the
+left, each with its icon. Run it from the Python Shell:
+
+```python
+import sys
+sys.path.insert(0, r"%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini")
+import rt_radial
+rt_radial.build()                      # session menu; rebuilds cleanly
+rt_radial.build(r"%PREF%\rt.radialmenu")  # also save a file to import
+```
+
+Then assign a key to the `RT` menu in **Edit > Radial Menus**. The check
+expression imports `rt_runtime`, so it needs the package on `sys.path`; without
+that it cannot evaluate. Building and the tick are **unverified in the GUI** —
+they are checklist step 11.
 
 ## 5. Panel
 

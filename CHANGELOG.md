@@ -13,6 +13,16 @@ actually run.
 
 ## [Unreleased]
 
+### Added
+
+- **Radial menu builder** (`houdini/rt_radial.py`): creates the `RT` menu with
+  **RT Toggle** (checked when the sidecar is ON), **RT Turn** and **RT Turn
+  Cancel**, each with its icon, using `hou.ui.createRadialMenu` and
+  `createScriptItem`. Optional `save_path` writes a `.radialmenu` file; the key
+  binding stays a Radial Menu Editor action.
+- 6 static tests covering the item spec, icon files, the check expression, the
+  generated action scripts and the documented API markers.
+
 ## [0.1.5] - 2026-11-12
 
 ### Added

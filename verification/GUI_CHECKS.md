@@ -6,7 +6,7 @@ sidecar ON with `/health` 200). 22.0.466 and 22.0.492 are a second stop after
 this list passes. 22.0.400 is untested; 21.0.773 is a different major line and
 out of scope.
 
-These ten steps cover what no automated test can: the click, the dispatch and
+These eleven steps cover what no automated test can: the click, the dispatch and
 the visible result. The client, poller, shelf XML and parm templates are all
 already tested or validated mechanically; nothing here repeats that.
 
@@ -28,6 +28,7 @@ a pass.
 | 8 | Shelf tools register, submit and cancel | | |
 | 9 | Node parms build, Run Turn and Cancel Turn work | | |
 | 10 | HUD handles appear over the viewport (and Vulkan, if enabled) | | |
+| 11 | Radial menu builds, checks ON, and runs its three actions | | |
 
 ## Setup
 
@@ -184,6 +185,33 @@ the same look-and-press and record whether the handles draw there. The reference
 corpus does not document HUD behaviour under Vulkan, so **NOT RUN** is the
 correct verdict when Vulkan is not in use.
 
+## Radial menu
+
+### Step 11 — radial menu builds, checks ON, and runs its three actions
+
+In the Python Shell:
+
+```python
+import sys
+sys.path.insert(0, r"%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini")
+import rt_radial
+menu = rt_radial.build()
+print(menu.name(), [i.label() for i in menu.root().items().values()])
+```
+
+Then assign a key to the `RT` menu in **Edit > Radial Menus**, open it there,
+and try each item.
+
+**Pass when:** the menu shows **RT Toggle**, **RT Turn** and **RT Turn Cancel**
+with their icons; Toggle carries a tick while the runtime is ON and loses it
+when OFF; Turn submits a turn; Cancel reaches `CANCELLING`. A menu that builds
+but never ticks is a FAIL on the check expression only — record that
+separately, because the actions can still work.
+
+**Why this needs the GUI:** hython 22.0.429 has no `hou.ui` attribute at all, so
+the radial API cannot be exercised headlessly. That was confirmed in this build,
+not assumed.
+
 ## Recording rules
 
 - One verdict per step, plus the visible text or a screenshot name.
@@ -197,10 +225,10 @@ correct verdict when Vulkan is not in use.
 
 ## After this list
 
-- PASS on all ten converts the "Not proven" section of
+- PASS on all eleven converts the "Not proven" section of
   `RELEASE_NOTES_v0.1.4.md` into evidence; carry the table into the next
   release notes.
-- Then, and only then, repeat steps 3, 8, 9 and 10 in 22.0.466 and 22.0.492.
+- Then, and only then, repeat steps 3, 8, 9, 10 and 11 in 22.0.466 and 22.0.492.
   The shelf schema, parm templates and HUD rendering are the parts most likely
   to drift; the sidecar side is a separate 3.14 process and does not change per
   build.

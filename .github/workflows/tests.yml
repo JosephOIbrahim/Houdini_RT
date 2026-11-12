@@ -1,7 +1,9 @@
 # CI for the RT Toggle extension scaffold (houdini-rt-toggle).
 #
 # What this workflow covers:
-#   - the test suite on CPython 3.12, 3.13 and 3.14
+#   - the test suite on CPython 3.12 and 3.13 on Ubuntu
+#   - the full suite on CPython 3.14 on Windows, where the lifecycle
+#     supervisor's taskkill/OpenProcess paths actually exist
 #   - parse validity of every shipped Houdini surface file
 #   - absence of machine-specific absolute paths and secret-shaped tokens
 #
@@ -27,8 +29,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Tests, once per supported interpreter. 3.13 matters because Houdini
   # 22.0.429 embeds Python 3.13; 3.12 is the older floor we still support.
-  # 3.14 is the sidecar launcher: tests/test_lifecycle.py skips on older
-  # interpreters and only runs in this leg.
+  # The 3.14 sidecar lifecycle suite is Windows-first (taskkill/OpenProcess),
+  # so it runs in the separate windows-latest job below, not on Ubuntu.
   # ---------------------------------------------------------------------------
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
@@ -39,7 +41,7 @@ jobs:
       # interesting signal and should not be hidden by 3.12 passing.
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13"]
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4
@@ -54,6 +56,31 @@ jobs:
 
       # The suite fakes `hou` (tests/fake_hou.py), so no Houdini is required.
       # -p no:cacheprovider keeps the run free of .pytest_cache artefacts.
+      - name: Run the test suite
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  # ---------------------------------------------------------------------------
+  # Python 3.14 on Windows. This is the sidecar launcher interpreter, and
+  # tests/test_lifecycle.py is Windows-first: the supervisor uses
+  # OpenProcess/TerminateProcess and taskkill, and the host shutdown path
+  # differs from POSIX. Running the full suite here exercises it natively.
+  # ---------------------------------------------------------------------------
+  pytest-windows-314:
+    name: pytest (Python 3.14, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
       - name: Run the test suite
         run: python -m pytest tests -q -p no:cacheprovider
 

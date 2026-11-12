@@ -47,9 +47,11 @@ export const CONFIG = {
   // Failure routing. Rules decide first; Jev advises. See router.ts for the policy.
   router: {
     mode: env("NIGHT_ROUTER", "act"),   // off | shadow | advise | act
-    model: "jev-latest",
+    model: "jev-1.14.0", // pinned so a Jev release can't change routing between nights; bump on purpose
     act: 0.9,        // Jev probability needed (with a rule signal) to stop a milestone early
-    lean: 0.5,       // Jev probability needed to add a hint to the ticket
+    yes: 0.7,        // Noul at or above this = yes band (adds a ticket hint)
+    no: 0.3,         // Noul at or below this = no band; between yes and no = unclear (no hint)
+    lean: 0.5,       // probability of fix_scope's chosen option needed to treat the scope as known
     streak: 3,       // same failing stage this many rounds running = stalled (rule)
     timeoutMs: 8000,
   },
@@ -74,6 +76,8 @@ export const CONFIG = {
       desc: "An HdRenderDelegate plugin (src/hdRT, CMake against the Houdini 22.0.429 HDK, installed to build/plugin_stage) registers hermetically as HoudiniRT, renders the step 2 closed-box furnace on an HdRenderThread with parameters from the RenderSettings prim, and a headless husk render writes a 256x256 EXR whose channel means match the analytic furnace value. The header of verify/s3_delegate.sh is the full contract." },
     { id: "s4-first-light",    gate: false, check: "verify/s4_firstlight.sh", timeoutMs: 30 * 60_000,
       desc: "Mesh and camera sync from Hydra (HdMeshUtil triangulation, Hd_SmoothNormals, both in code). The usd-wg teapot and a table under one uniform dome render through the delegate; census and hrt_bounces in the EXR header match the stage; beauty matches Karma CPU on level, FLIP and alpha coverage. First light. The header of verify/s4_firstlight.sh is the full contract." },
+    { id: "s5-live-edits",     gate: false, check: "verify/s5_liveedits.sh",  timeoutMs: 40 * 60_000,
+      desc: "Edits cost what they change: one BLAS per mesh in object space, one TLAS instance per mesh, deltas from Hydra dirty bits (transform/visibility -> TLAS only; points -> one refit; topology -> one rebuild; displayColor -> one table row), device-local scene memory, per-frame cost counters in the EXR header. A multi-frame husk edit sequence matches from-scratch renders frame by frame, and the counters are identical at 1M and 4M ballast triangles. s4 still passes. The header of verify/s5_liveedits.sh is the full contract." },
   ],
 } as const;
 

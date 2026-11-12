@@ -23,7 +23,19 @@ import type { Outcome } from "./state.js";
 
 const API = "https://api.typesafe.ai/v1/systemone";
 
-export interface RouterConfig { mode: string; model: string; act: number; lean: number; streak: number; timeoutMs: number; }
+export interface RouterConfig { mode: string; model: string; act: number; yes: number; no: number; lean: number; streak: number; timeoutMs: number; }
+
+// Stages where the program under test never produced a runnable binary. A failure here is the
+// program's own build, so "the exam is wrong" is never hinted or acted on (s3 log: Jev put
+// 0.61-0.72 on exam_suspect for binary-missing, and the ticket told the agent so every round).
+export const BUILD_STAGES = new Set(["cmake-configure", "build-link", "binary-missing"]);
+
+export type Band = "yes" | "unclear" | "no" | "none";
+/** Noul band: >= yes is yes, <= no is no, between is its own outcome (unclear). */
+export function band(p: number | undefined, cfg: Pick<RouterConfig, "yes" | "no">): Band {
+  if (p === undefined || p === null || Number.isNaN(p)) return "none";
+  return p >= cfg.yes ? "yes" : p <= cfg.no ? "no" : "unclear";
+}
 
 export interface Advice {
   route: "repair_local" | "escalate_exam" | "escalate_capability";
@@ -34,7 +46,38 @@ export interface Advice {
 
 interface JevAnswers {
   exam_suspect?: number; same_root_cause?: number; log_names_fix?: number;
-  fix_scope?: string; fix_scope_conf?: number; error?: string; model?: string; ms?: number;
+  fix_scope?: string; fix_scope_p?: number; fix_scope_conf?: number; fix_scope_probs?: Record<string, number>;
+  error?: string; model?: string; ms?: number;
+}
+
+export interface Decision {
+  route: Advice["route"]; reason: string; last: string; streak: number; stalled: boolean; buildStage: boolean;
+  examHigh: boolean; bands: { exam_suspect: Band; same_root_cause: Band; log_names_fix: Band };
+  scopeKnown: boolean;   // fix_scope's chosen option has probability >= lean
+}
+
+/** Pure policy: rules + Jev answers -> route and hint flags. No I/O, so it can be replayed from the log. */
+export function decide(jev: JevAnswers, stageHistory: string[], cfg: RouterConfig): Decision {
+  const last = stageHistory[stageHistory.length - 1];
+  let streak = 0;
+  for (let i = stageHistory.length - 1; i >= 0 && stageHistory[i] === last; i--) streak++;
+  const stalled = streak >= cfg.streak;
+  const buildStage = BUILD_STAGES.has(last);
+  const bands = {
+    exam_suspect: buildStage ? "no" as Band : band(jev.exam_suspect, cfg),
+    same_root_cause: band(jev.same_root_cause, cfg),
+    log_names_fix: band(jev.log_names_fix, cfg),
+  };
+  // Gate on the probability of the option we act on, not on Choice confidence (TypeSafe docs).
+  const scopeKnown = (jev.fix_scope_p ?? 0) >= cfg.lean;
+  const examHigh = !buildStage && (jev.exam_suspect ?? 0) >= cfg.act;
+  const sameHigh = (jev.same_root_cause ?? 0) >= cfg.act;
+  const missing = jev.fix_scope === "missing_component" && scopeKnown;
+  let route: Advice["route"] = "repair_local";
+  let reason = stalled ? `same stage "${last}" ${streak} rounds running; Jev did not confirm a stall` : "ordinary failure";
+  if (stalled && examHigh) { route = "escalate_exam"; reason = `same stage "${last}" ${streak} rounds running and Jev puts ${jev.exam_suspect!.toFixed(2)} on the exam itself being wrong`; }
+  else if (stalled && (sameHigh || missing)) { route = "escalate_capability"; reason = `same stage "${last}" ${streak} rounds running; Jev: same root cause ${(jev.same_root_cause ?? 0).toFixed(2)}, fix scope ${jev.fix_scope ?? "?"} (p=${(jev.fix_scope_p ?? 0).toFixed(2)})`; }
+  return { route, reason, last, streak, stalled, buildStage, examHigh, bands, scopeKnown };
 }
 
 function sh(cmd: string, cwd: string): string {
@@ -92,7 +135,8 @@ async function askJev(cfg: RouterConfig, state: unknown): Promise<JevAnswers> {
     const a = j.answers ?? {};
     return {
       exam_suspect: a.exam_suspect?.noul, same_root_cause: a.same_root_cause?.noul, log_names_fix: a.log_names_fix?.noul,
-      fix_scope: a.fix_scope?.choice, fix_scope_conf: a.fix_scope?.confidence, model: j.model, ms: Date.now() - t0,
+      fix_scope: a.fix_scope?.choice, fix_scope_p: a.fix_scope?.probabilities?.[a.fix_scope?.choice],
+      fix_scope_conf: a.fix_scope?.confidence, fix_scope_probs: a.fix_scope?.probabilities, model: j.model, ms: Date.now() - t0,
     };
   } catch (e) {
     return { error: `jev error: ${(e as Error).message}`, ms: Date.now() - t0 };
@@ -107,11 +151,7 @@ export async function adviseFailure(args: {
   const none: Advice = { route: "repair_local", escalate: false, reason: "router off", ticketNote: "" };
   if (cfg.mode === "off") return none;
 
-  // ---- rules ----
   const last = stageHistory[stageHistory.length - 1];
-  let streak = 0;
-  for (let i = stageHistory.length - 1; i >= 0 && stageHistory[i] === last; i--) streak++;
-  const stalled = streak >= cfg.streak;
 
   // ---- Jev ----
   const ticketPath = join(wt, ".claude", "rules", "remediation_ticket.md");
@@ -130,20 +170,15 @@ export async function adviseFailure(args: {
   const jev = await askJev(cfg, state);
 
   // ---- policy ----
-  const examHigh = (jev.exam_suspect ?? 0) >= cfg.act;
-  const sameHigh = (jev.same_root_cause ?? 0) >= cfg.act;
-  const missing = jev.fix_scope === "missing_component" && (jev.fix_scope_conf ?? 0) >= cfg.lean;
-  let route: Advice["route"] = "repair_local";
-  let reason = stalled ? `same stage "${last}" ${streak} rounds running; Jev did not confirm a stall` : "ordinary failure";
-  if (stalled && examHigh) { route = "escalate_exam"; reason = `same stage "${last}" ${streak} rounds running and Jev puts ${jev.exam_suspect!.toFixed(2)} on the exam itself being wrong`; }
-  else if (stalled && (sameHigh || missing)) { route = "escalate_capability"; reason = `same stage "${last}" ${streak} rounds running; Jev: same root cause ${(jev.same_root_cause ?? 0).toFixed(2)}, fix scope ${jev.fix_scope ?? "?"}`; }
+  const d = decide(jev, stageHistory, cfg);
+  const { route, reason, streak, examHigh, bands } = d;
   const escalate = cfg.mode === "act" && route !== "repair_local";
 
   // ---- record ----
   try {
     mkdirSync(join(root, ".claude"), { recursive: true });
     appendFileSync(join(root, ".claude", "router_log.jsonl"), JSON.stringify({
-      at: new Date().toISOString(), milestone, round, stage: last, streak, mode: cfg.mode, jev, route, escalate, reason,
+      at: new Date().toISOString(), milestone, round, stage: last, streak, mode: cfg.mode, jev, bands, route, escalate, reason,
     }) + "\n");
   } catch { /* log is best-effort */ }
   if (cfg.mode === "shadow") return { ...none, reason: `shadow: ${reason}` };
@@ -156,9 +191,12 @@ export async function adviseFailure(args: {
   let note = "\n## Router advice (advisory; the exam still decides)\n";
   if (jev.error) note += `- Jev unavailable (${jev.error}); rules only.\n`;
   else {
-    note += `- Fix scope looks like: **${jev.fix_scope}**. The log ${(jev.log_names_fix ?? 0) >= cfg.lean ? "names a specific cause; start there" : "does not name a specific cause; add instrumentation before guessing"}.\n`;
-    if ((jev.same_root_cause ?? 0) >= cfg.lean && round > 1) note += `- This looks like the same root cause as last round. The previous fix did not work; do not repeat it.\n`;
-    if ((jev.exam_suspect ?? 0) >= cfg.lean) note += `- The exam itself may be at fault (p=${jev.exam_suspect!.toFixed(2)}). Do NOT edit verify/. If you agree after reading the logs, say so in claude-progress.md with the evidence and stop.\n`;
+    note += d.scopeKnown ? `- Fix scope looks like: **${jev.fix_scope}**.` : `- Fix scope is unclear (top guess ${jev.fix_scope ?? "?"}, p=${(jev.fix_scope_p ?? 0).toFixed(2)}).`;
+    note += bands.log_names_fix === "yes" ? " The log names a specific cause; start there.\n"
+      : bands.log_names_fix === "no" ? " The log does not name a specific cause; add instrumentation before guessing.\n"
+      : " It is unclear whether the log names the cause; confirm it before editing.\n";
+    if (bands.same_root_cause === "yes" && round > 1) note += `- This looks like the same root cause as last round. The previous fix did not work; do not repeat it.\n`;
+    if (bands.exam_suspect === "yes") note += `- The exam itself may be at fault (p=${jev.exam_suspect!.toFixed(2)}). Do NOT edit verify/. If you agree after reading the logs, say so in claude-progress.md with the evidence and stop.\n`;
   }
   console.log(`[${milestone}] route: ${route}${escalate ? " (stopping early)" : ""} | ${reason}` + (jev.error ? ` | ${jev.error}` : ` | jev ${jev.ms} ms`));
   return { route, escalate, reason, ticketNote: note };

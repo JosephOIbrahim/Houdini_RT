@@ -316,7 +316,7 @@ target for ABI-specific binaries.
 `interpreter_abi` is the host cache tag, for example `cp313` under Houdini and
 `cp314` under `C:\Python314\python.exe`.
 
-The HoudiniRT `site-packages` directory has 104 `cp314` `.pyd` files. Under
+The HoudiniRT `site-packages` directory has 108 `cp314` `.pyd` files. Under
 Houdini 22.0.429 the first row applies: **the guard must refuse the full
 package.** That is the expected, correct behavior, not a bug.
 
@@ -557,7 +557,7 @@ longer depend on the test host's minor version.
 | Parameter callback scripts and `kwargs` | `docs\hom\locations.md:301` |
 | `hou.ui.displayMessage` | `docs\hom\hou\ui.md:247` |
 | Houdini 22.0.429 runs 3.13.10 | `runtime_smoke_evidence.json`; `bin\python313.dll` |
-| HoudiniRT is a 3.14 distribution | `libs\python314.lib`; 104 `cp314` `.pyd`; `pythonw.exe` → `python314.dll` |
+| HoudiniRT is a 3.14 distribution | `libs\python314.lib`; 108 `cp314` `.pyd`; `pythonw.exe` → `python314.dll` |
 | `Scripts\*.exe` wrappers target 3.14 | embedded shebang `#!C:\Python314\python.exe`; `C:\Python314\python.exe` reports 3.14.2 |
 
 ### Proposed (this design, not in the docs)

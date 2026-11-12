@@ -50,7 +50,7 @@ Searches run for this review:
 | Claim | Subject | Verdict | Basis |
 |---|---|---|---|
 | C1 | HoudiniRT structure | **Supported locally**, not by D: | Direct inspection of `%HOUDINI_RT_ROOT%` |
-| C2 | Add whole `site-packages` to `PYTHONPATH` | **Contradicted in practice** | 3.13 host vs 3.14 target, 104 `cp314` binaries |
+| C2 | Add whole `site-packages` to `PYTHONPATH` | **Contradicted in practice** | 3.13 host vs 3.14 target, 108 `cp314` binaries |
 | C3 | Import in the Houdini Python Shell | **Not addressed** | D: silent; needs a build check |
 | C4 | Run `Scripts\*.exe` outside Houdini | **Not addressed; directionally right** | Wrapper shebang verified; end-to-end unverified |
 | C5 | Which package is "the RT" is unspecified | **Not addressed; true** | No RT-named package found; no corpus guidance |
@@ -78,7 +78,7 @@ Direct evidence from `%HOUDINI_RT_ROOT%`:
 | Separate distribution root | `%HOUDINI_RT_ROOT%` |
 | 3.14 import library | `libs\python314.lib` |
 | 3.14 runtime DLL referenced by the launcher | `pythonw.exe` contains `python314.dll` |
-| 3.14 extension modules | 104 `*cp314*.pyd` files under `Lib\site-packages` (175 `.pyd` total) |
+| 3.14 extension modules | 108 `*cp314*.pyd` files under `Lib\site-packages` (195 `.pyd` total) |
 | Full package set | 572 entries under `Lib\site-packages` |
 | Launcher present | `pythonw.exe` only; no `python.exe` in the root |
 | Console wrappers | 102 `.exe` files under `Scripts\` |
@@ -106,7 +106,7 @@ Evidence:
 | Houdini runtime DLL | `python313.dll` | `C:\Program Files\Side Effects Software\Houdini 22.0.429\bin\` |
 | Houdini extension ABI | `PyImath_Python3_13-3_2.dll` | same folder |
 | HoudiniRT interpreter | Python 3.14 | `libs\python314.lib`; `pythonw.exe` → `python314.dll` |
-| HoudiniRT compiled modules | 104 `cp314` `.pyd` files | `Lib\site-packages` |
+| HoudiniRT compiled modules | 108 `cp314` `.pyd` files | `Lib\site-packages` |
 | Other 3.14 binaries | 102 `Scripts\*.exe` wrappers | `Scripts\` |
 
 Why the claim fails:
@@ -116,7 +116,7 @@ Why the claim fails:
    import time at best, and can be process-level at worst. The exact symptom is
    unmeasured here, which is why the design treats it as unsafe rather than
    merely "slow".
-2. Adding the directory to `PYTHONPATH` makes all 175 `.pyd` files and all 572
+2. Adding the directory to `PYTHONPATH` makes all 195 `.pyd` files and all 572
    packages visible. Houdini bundles its own `numpy`, Qt bindings and other
    modules. A second copy on `sys.path` can shadow or conflict with Houdini's
    own imports even when the RT module itself is never imported.
@@ -262,8 +262,8 @@ The following replaces C2 in full.
 > `houdini.env`, or to a startup script.**
 >
 > Houdini 22.0.429 embeds Python 3.13.10 (`bin\python313.dll`). The HoudiniRT
-> `site-packages` directory is a Python 3.14 tree: it contains 104 `cp314`
-> extension modules and 175 `.pyd` files in total. Python 3.13 cannot import
+> `site-packages` directory is a Python 3.14 tree: it contains 108 `cp314`
+> extension modules and 195 `.pyd` files in total. Python 3.13 cannot import
 > `cp314` binaries, and exposing the whole tree can shadow Houdini's own bundled
 > modules.
 >
@@ -331,8 +331,8 @@ Local build facts:
 - `C:\Program Files\Side Effects Software\Houdini 22.0.429\bin\python313.dll` —
   Houdini interpreter ABI.
 - `%HOUDINI_RT_ROOT%\libs\python314.lib` — RT import library.
-- `%HOUDINI_RT_ROOT%\Lib\site-packages` — 104 `cp314` `.pyd`,
-  175 `.pyd` total, 572 entries.
+- `%HOUDINI_RT_ROOT%\Lib\site-packages` — 108 `cp314` `.pyd`,
+  195 `.pyd` total, 573 entries.
 - `%HOUDINI_RT_ROOT%\Scripts\pytest.exe` — embedded shebang
   `#!C:\Python314\python.exe`.
 - `C:\Python314\python.exe` — reports 3.14.2.

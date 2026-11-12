@@ -227,6 +227,41 @@ def test_panel_readable_copy_matches_the_pypanel_script():
     assert not problems, "Panel copies are out of sync:\n  " + "\n  ".join(problems)
 
 
+def test_shelf_exposes_a_turn_tool_and_a_cancel_tool():
+    """The shelf must offer the same submit/cancel pair as the panel."""
+    _skip_without(SHELVES, ".shelf")
+    problems: list[str] = []
+    for path in SHELVES:
+        text = _read(path)
+        if "turn_from_shelf" not in text:
+            problems.append(f"{path.name}: no tool calls turn_from_shelf")
+        if "cancel_turn_from_shelf" not in text:
+            problems.append(f"{path.name}: no tool calls cancel_turn_from_shelf")
+    assert not problems, "Shelf turn-tool contract violations:\n  " + "\n  ".join(problems)
+
+
+def _node_recipes() -> list[Path]:
+    found = []
+    for path in EXT_ROOT.rglob("*.py"):
+        if SKIP_DIR_NAMES.intersection(path.parts):
+            continue
+        if path.name == "rt_node.py" and path.is_file():
+            found.append(path)
+    return sorted(found)
+
+
+def test_node_recipe_exposes_turn_parms():
+    recipes = _node_recipes()
+    _skip_without(recipes, "node recipe")
+    problems: list[str] = []
+    for path in recipes:
+        text = _read(path)
+        for marker in ("rt_run_turn", "rt_cancel_turn", "turn_callback"):
+            if marker not in text:
+                problems.append(f"{path.name}: missing {marker}")
+    assert not problems, "Node turn-parm contract violations:\n  " + "\n  ".join(problems)
+
+
 # ---------------------------------------------------------------------------
 # shelf
 # ---------------------------------------------------------------------------

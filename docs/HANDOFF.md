@@ -96,11 +96,12 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
 
 ## Open items
 
-1. **Prove the turn control in Houdini.** The client and poller are tested over
-   a real loopback server and the widget wiring is checked statically, but
-   nobody has clicked **Run turn** in the GUI. The three cases to run: sidecar
-   stopped gives a clear ERROR with no traceback; a running turn reaches a
-   terminal result with the UI responsive; Cancel mid-turn yields cancelled.
+1. **Prove the turn controls in Houdini.** The panel button, the two shelf
+   tools and the node parms are all unclicked in the GUI. The client, poller
+   and server are tested over loopback and the wiring is checked statically.
+   The cases to run per surface: sidecar stopped gives a clear ERROR with no
+   traceback; a running turn reaches a terminal result with the UI responsive;
+   Cancel mid-turn yields cancelled.
 2. **GUI checks.** Pane render, shelf click, parm event dispatch, gear-menu
    duplicate, uninstall (Install Check 6) are still manual.
 3. **3.13 in-process sibling runtime.** Planned, not installed; the ABI refusal

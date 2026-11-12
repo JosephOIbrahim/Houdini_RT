@@ -214,3 +214,167 @@ def toggle_from_shelf():
 
 if __name__ == "__main__":
     toggle_from_shelf()
+
+
+# ---------------------------------------------------------------------------
+# One turn, from the shelf
+# ---------------------------------------------------------------------------
+
+#: Prefix on every turn status line.
+TURN_PREFIX = "HoudiniRT turn"
+
+#: How long one click follows a turn before leaving it running. The panel polls
+#: on a Qt timer; a shelf click has no timer, so it polls for a bounded moment
+#: and then reports the request id for the cancel tool.
+DEFAULT_TURN_POLL_S = 2.0
+
+#: The most recent turn, so ``rt_turn_cancel`` can reach it.
+_ACTIVE_TURN = {"control": None, "poller": None}
+
+
+def _read_turn_prompt():
+    """Prompt text from ``RT_TURN_PROMPT`` or a Houdini input box; '' if none."""
+    env = os.environ.get("RT_TURN_PROMPT")
+    if env and env.strip():
+        return env.strip()
+    try:
+        import hou
+    except Exception:
+        return ""
+    try:
+        value = hou.ui.readInput("HoudiniRT turn prompt", buttons=("OK", "Cancel"))
+    except Exception:
+        return ""
+    # readInput returns (button_index, text) on current builds.
+    if isinstance(value, (tuple, list)) and len(value) >= 2:
+        return str(value[1] or "").strip()
+    return ""
+
+
+def _poll_to_end(poller, deadline_s):
+    """Poll until terminal or the deadline passes; never sleeps past it."""
+    import time
+
+    end = time.monotonic() + max(0.0, float(deadline_s))
+    while not poller.done and time.monotonic() < end:
+        poller.refresh()
+        if not poller.done:
+            time.sleep(0.05)
+    return poller
+
+
+def describe_turn(poller):
+    """Return ``(one_line_text, severity_key)`` for a ``TurnPoller``."""
+    if poller is None:
+        return f"{TURN_PREFIX}: no turn", "warning"
+    if poller.error:
+        return f"{TURN_PREFIX}: ERROR - {poller.error}", "error"
+
+    state = poller.state
+    if state == "complete":
+        result = poller.result
+        text = result.get("text") if isinstance(result, Mapping) else None
+        if text:
+            return f"{TURN_PREFIX}: complete - {text}", "message"
+        return f"{TURN_PREFIX}: complete", "message"
+    if state in ("cancelled", "timeout"):
+        return f"{TURN_PREFIX}: {state}", "warning"
+    if state == "error":
+        kind = (poller.document or {}).get("error_kind") or "error"
+        return f"{TURN_PREFIX}: error - {kind}", "error"
+    return f"{TURN_PREFIX}: {state} {poller.request_id}", "message"
+
+
+def turn_from_shelf(prompt=None, wait_s=None):
+    """Submit one turn and follow it briefly. Never raises.
+
+    Uses ``wait_ms=0`` like the panel, so admission returns at once. With no
+    event loop to poll from, this click then polls for ``RT_TURN_POLL_S``
+    seconds (default 2.0) and leaves the turn running if it takes longer; the
+    cancel tool can still reach it.
+    """
+    try:
+        ensure_runtime_importable()
+        from rt_runtime import session
+
+        control = session.get_adapter().turn_control()
+    except Exception:
+        detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
+        report_status(f"{TURN_PREFIX}: failed - {detail}", "error")
+        return None
+
+    if control is None:
+        report_status(
+            f"{TURN_PREFIX}: sidecar is not running - turn the runtime ON first",
+            "warning",
+        )
+        return None
+
+    text = _read_turn_prompt() if prompt is None else str(prompt).strip()
+    if not text:
+        report_status(f"{TURN_PREFIX}: no prompt given", "warning")
+        return None
+
+    try:
+        code, body = control.submit(text, wait_ms=0)
+    except Exception:
+        detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
+        report_status(f"{TURN_PREFIX}: submit failed - {detail}", "error")
+        return None
+
+    body = body if isinstance(body, Mapping) else {}
+    if code not in (200, 202):
+        message = body.get("error") or body.get("message") or f"HTTP {code}"
+        report_status(f"{TURN_PREFIX}: rejected - {message}", "error")
+        return None
+
+    request_id = body.get("request_id")
+    if not request_id:
+        report_status(f"{TURN_PREFIX}: sidecar returned no request id", "error")
+        return None
+
+    try:
+        from rt_runtime.turn_control import TurnPoller
+    except Exception:
+        report_status(f"{TURN_PREFIX}: rt_runtime.turn_control not importable", "error")
+        return None
+
+    poller = TurnPoller(control, str(request_id))
+    poller.document = dict(body)
+    _ACTIVE_TURN["control"] = control
+    _ACTIVE_TURN["poller"] = poller
+
+    try:
+        limit = float(os.environ.get("RT_TURN_POLL_S", DEFAULT_TURN_POLL_S))
+    except (TypeError, ValueError):
+        limit = DEFAULT_TURN_POLL_S
+    _poll_to_end(poller, limit if wait_s is None else wait_s)
+
+    if poller.done:
+        text, level = describe_turn(poller)
+    else:
+        text = f"{TURN_PREFIX}: running {request_id} - use RT Turn Cancel to stop it"
+        level = "message"
+    report_status(text, level)
+    return poller
+
+
+def cancel_turn_from_shelf():
+    """Cancel the most recent turn, if it is still running. Never raises."""
+    poller = _ACTIVE_TURN.get("poller")
+    control = _ACTIVE_TURN.get("control")
+    if poller is None or control is None or poller.done:
+        report_status(f"{TURN_PREFIX}: no running turn", "message")
+        return None
+    try:
+        code, body = control.cancel(poller.request_id)
+    except Exception:
+        detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
+        report_status(f"{TURN_PREFIX}: cancel failed - {detail}", "error")
+        return None
+    if code in (200, 202):
+        report_status(f"{TURN_PREFIX}: cancelling {poller.request_id}", "message")
+    else:
+        report_status(f"{TURN_PREFIX}: cancel rejected - HTTP {code}", "warning")
+    return poller
+

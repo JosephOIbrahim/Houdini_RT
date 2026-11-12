@@ -55,6 +55,17 @@ ENABLE_LABEL = "RT Runtime"
 STATUS_PARM = "rt_status"
 STATUS_LABEL = "RT Status"
 
+TURN_PROMPT_PARM = "rt_prompt"
+TURN_PROMPT_LABEL = "RT Prompt"
+TURN_RUN_PARM = "rt_run_turn"
+TURN_RUN_LABEL = "Run Turn"
+TURN_CANCEL_PARM = "rt_cancel_turn"
+TURN_CANCEL_LABEL = "Cancel Turn"
+TURN_STATUS_PARM = "rt_turn_status"
+TURN_STATUS_LABEL = "RT Turn Status"
+
+TURN_IDLE = "IDLE"
+
 STATUS_OFF = "OFF"
 STATUS_ON = "ON"
 STATUS_REFUSED = "REFUSED"
@@ -70,6 +81,13 @@ _EXT_ROOT = os.path.dirname(_MODULE_DIR)
 # because Houdini parm callbacks run in the main thread; it is not scene state
 # and is not saved anywhere.
 _TOGGLE_IN_PROGRESS = False
+
+#: The most recent turn, so the Cancel Turn button can reach it.
+_ACTIVE_TURN = {"control": None, "poller": None}
+
+#: How long one Run Turn click follows a turn before leaving it running. A parm
+#: callback has no timer, so it polls for a bounded moment like the shelf tool.
+DEFAULT_TURN_POLL_S = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -88,14 +106,28 @@ def callback_script():
     docs:hom/locations.md#parameter_callback_scripts ("write one line of
     Python that calls the 'real' callback function").
     """
+    return _callback_call("toggle_callback")
+
+
+def turn_callback_script():
+    """Callback script for the Run Turn button."""
+    return _callback_call("turn_callback")
+
+
+def cancel_callback_script():
+    """Callback script for the Cancel Turn button."""
+    return _callback_call("cancel_turn_callback")
+
+
+def _callback_call(function):
     return (
         "import sys; "
         "_rt_module_dir = {module!r}; "
         "_rt_ext_root = {root!r}; "
         "(_rt_module_dir in sys.path) or sys.path.insert(0, _rt_module_dir); "
         "(_rt_ext_root in sys.path) or sys.path.insert(0, _rt_ext_root); "
-        "import rt_node; rt_node.toggle_callback(kwargs)"
-    ).format(module=_MODULE_DIR, root=_EXT_ROOT)
+        "import rt_node; rt_node.{name}(kwargs)"
+    ).format(module=_MODULE_DIR, root=_EXT_ROOT, name=function)
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +196,67 @@ def build(parent=None, name=NODE_NAME):
                 )
             )
 
+        # -- one turn ----------------------------------------------------
+        prompt_template = hou.StringParmTemplate(
+            TURN_PROMPT_PARM,
+            TURN_PROMPT_LABEL,
+            1,
+            default_value=("",),
+            help=(
+                "Prompt for one turn. Run Turn submits it to the running "
+                "HoudiniRT sidecar; Cancel Turn stops the most recent one."
+            ),
+        )
+        run_template = hou.ButtonParmTemplate(
+            TURN_RUN_PARM,
+            TURN_RUN_LABEL,
+            help=(
+                "Submit one turn with wait_ms=0, then poll for up to "
+                "RT_TURN_POLL_S seconds (default 2)."
+            ),
+            script_callback=turn_callback_script(),
+            script_callback_language=hou.scriptLanguage.Python,
+        )
+        cancel_template = hou.ButtonParmTemplate(
+            TURN_CANCEL_PARM,
+            TURN_CANCEL_LABEL,
+            help="Ask the running turn to stop. Cancellation is cooperative.",
+            script_callback=cancel_callback_script(),
+            script_callback_language=hou.scriptLanguage.Python,
+        )
+        turn_status_template = hou.StringParmTemplate(
+            TURN_STATUS_PARM,
+            TURN_STATUS_LABEL,
+            1,
+            default_value=(TURN_IDLE,),
+            help=(
+                "Read-only result of the last turn: IDLE, running <id>, "
+                "complete, cancelled, timeout or an error."
+            ),
+        )
+        for name, template in (
+            (TURN_PROMPT_PARM, prompt_template),
+            (TURN_RUN_PARM, run_template),
+            (TURN_CANCEL_PARM, cancel_template),
+            (TURN_STATUS_PARM, turn_status_template),
+        ):
+            if group.find(name) is None:
+                group.append(template)
+            else:
+                group.replace(name, template)
+
         node.setParmTemplateGroup(group)
 
-        # Lock the status parm so it cannot be typed over in the parameter
+        # Lock the status parms so they cannot be typed over in the parameter
         # pane. lock() raises hou.PermissionError when the parm belongs to a
         # locked digital asset, so the failure is swallowed here.
-        status_parm = node.parm(STATUS_PARM)
-        if status_parm is not None:
-            try:
-                status_parm.lock(True)
-            except Exception:
-                pass
+        for parm_name in (STATUS_PARM, TURN_STATUS_PARM):
+            parm = node.parm(parm_name)
+            if parm is not None:
+                try:
+                    parm.lock(True)
+                except Exception:
+                    pass
 
     print("RT_TOGGLE ready at {}".format(node.path()))
     return node
@@ -249,6 +331,150 @@ def toggle_callback(kwargs):
 
 
 # ---------------------------------------------------------------------------
+# Turn callbacks
+# ---------------------------------------------------------------------------
+
+def turn_callback(kwargs):
+    """Handle a press of Run Turn: submit one turn, poll briefly, report.
+
+    ``wait_ms=0`` returns at once, like the panel. A parm callback has no
+    timer to poll from, so this follows the turn for ``RT_TURN_POLL_S``
+    seconds (default 2.0) and leaves it running if it takes longer; Cancel
+    Turn can still reach it.
+    """
+    node = kwargs.get("node")
+    if node is None:
+        node = hou.pwd()
+    if node is None:
+        return
+
+    prompt_parm = node.parm(TURN_PROMPT_PARM)
+    text = "" if prompt_parm is None else str(prompt_parm.eval()).strip()
+    if not text:
+        _set_parm_text(node, TURN_STATUS_PARM, "ERROR | no prompt given")
+        return
+
+    try:
+        from rt_runtime import session
+
+        control = session.get_adapter().turn_control()
+    except Exception as exc:
+        _set_parm_text(node, TURN_STATUS_PARM, "ERROR | {}".format(exc))
+        return
+    if control is None:
+        _set_parm_text(
+            node,
+            TURN_STATUS_PARM,
+            "ERROR | sidecar is not running; turn the runtime ON first",
+        )
+        return
+
+    try:
+        code, body = control.submit(text, wait_ms=0)
+    except Exception as exc:
+        _set_parm_text(
+            node, TURN_STATUS_PARM, "ERROR | submit failed: {!r}".format(exc)
+        )
+        return
+
+    body = body if isinstance(body, dict) else {}
+    if code not in (200, 202):
+        message = body.get("error") or body.get("message") or "HTTP {}".format(code)
+        _set_parm_text(
+            node, TURN_STATUS_PARM, "ERROR | rejected: {}".format(message)
+        )
+        return
+
+    request_id = body.get("request_id")
+    if not request_id:
+        _set_parm_text(node, TURN_STATUS_PARM, "ERROR | no request id")
+        return
+
+    try:
+        from rt_runtime.turn_control import TurnPoller
+    except Exception as exc:
+        _set_parm_text(
+            node,
+            TURN_STATUS_PARM,
+            "ERROR | rt_runtime.turn_control not importable: {!r}".format(exc),
+        )
+        return
+
+    poller = TurnPoller(control, str(request_id))
+    poller.document = dict(body)
+    _ACTIVE_TURN["control"] = control
+    _ACTIVE_TURN["poller"] = poller
+
+    try:
+        limit = float(os.environ.get("RT_TURN_POLL_S", DEFAULT_TURN_POLL_S))
+    except (TypeError, ValueError):
+        limit = DEFAULT_TURN_POLL_S
+    _poll_to_end(poller, limit)
+    _set_parm_text(node, TURN_STATUS_PARM, _turn_text(poller))
+
+
+def cancel_turn_callback(kwargs):
+    """Handle a press of Cancel Turn. Never raises."""
+    node = kwargs.get("node")
+    if node is None:
+        node = hou.pwd()
+    if node is None:
+        return
+
+    poller = _ACTIVE_TURN.get("poller")
+    control = _ACTIVE_TURN.get("control")
+    if poller is None or control is None or poller.done:
+        _set_parm_text(node, TURN_STATUS_PARM, "IDLE | no running turn")
+        return
+    try:
+        code, _body = control.cancel(poller.request_id)
+    except Exception as exc:
+        _set_parm_text(
+            node, TURN_STATUS_PARM, "ERROR | cancel failed: {!r}".format(exc)
+        )
+        return
+    if code in (200, 202):
+        _set_parm_text(
+            node, TURN_STATUS_PARM, "CANCELLING | {}".format(poller.request_id)
+        )
+    else:
+        _set_parm_text(
+            node, TURN_STATUS_PARM, "ERROR | cancel rejected: HTTP {}".format(code)
+        )
+
+
+def _poll_to_end(poller, deadline_s):
+    """Poll until terminal or the deadline passes. Never sleeps past it."""
+    import time
+
+    end = time.monotonic() + max(0.0, float(deadline_s))
+    while not poller.done and time.monotonic() < end:
+        poller.refresh()
+        if not poller.done:
+            time.sleep(0.05)
+    return poller
+
+
+def _turn_text(poller):
+    """One parm line for a TurnPoller."""
+    if poller.error:
+        return "ERROR | {}".format(poller.error)
+    state = poller.state
+    if state == "complete":
+        result = poller.result
+        text = result.get("text") if isinstance(result, dict) else None
+        if text:
+            return "COMPLETE | {}".format(text)
+        return "COMPLETE | {}".format(poller.request_id)
+    if state == "error":
+        kind = (poller.document or {}).get("error_kind") or "error"
+        return "ERROR | {}".format(kind)
+    if state in ("cancelled", "timeout"):
+        return "{} | {}".format(state.upper(), poller.request_id)
+    return "RUNNING | {}".format(poller.request_id)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -269,14 +495,19 @@ def _restore_enable(parm, value):
 
 
 def _set_status(node, text):
-    """Write ``text`` into the read-only status parm.
+    """Write ``text`` into the read-only toggle status parm."""
+    _set_parm_text(node, STATUS_PARM, text)
+
+
+def _set_parm_text(node, parm_name, text):
+    """Write ``text`` into a read-only string parm.
 
     The parm is locked in the UI. The docs do not state whether Parm.set()
     is refused on a locked parm, so this unlocks first when it can, writes,
     then re-locks. On a locked digital asset, ``lock(False)`` raises
     hou.PermissionError; the plain write is attempted instead.
     """
-    status_parm = node.parm(STATUS_PARM)
+    status_parm = node.parm(parm_name)
     if status_parm is None:
         return
 

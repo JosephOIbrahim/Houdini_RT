@@ -13,6 +13,18 @@ actually run.
 
 ## [Unreleased]
 
+### Added
+
+- **Turn control on the shelf and the node**, matching the panel. `rt_shelf.py`
+  gains `turn_from_shelf()` and `cancel_turn_from_shelf()`; `rt_shelf.shelf`
+  gains the **RT Turn** and **RT Turn Cancel** tools. `rt_node.py` gains
+  `rt_prompt`, Run Turn, Cancel Turn and a read-only `rt_turn_status` parm.
+  All three surfaces submit with `wait_ms=0`; the panel polls on a Qt timer,
+  while the shelf and node poll for a bounded window (`RT_TURN_POLL_S`,
+  default 2 s) and leave the turn running after that.
+- 2 UI contract tests: the shelf exposes both turn tools, and the node recipe
+  carries the turn parms and callback.
+
 ## [0.1.3] - 2026-11-12
 
 ### Added

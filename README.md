@@ -29,10 +29,13 @@ cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
 - **In-process guard.** Any attempt to load the full 3.14 `site-packages` under
   Houdini's 3.13 interpreter is refused with the ABI blocker named. Refusal is a
   designed outcome, not a crash.
-- **One turn at a time, from the panel.** A prompt field, a run button and a
-  cancel button. Submit returns immediately (202) and a Qt timer polls
-  `/turn/<id>` until the turn ends, so Houdini stays responsive. Offline by
-  default; `RT_SIDECAR_LIVE_MODEL=1` turns the same control into a live turn.
+- **One turn at a time, from any surface.** The panel has a prompt field, a run
+  button and a cancel button; the shelf has **RT Turn** and **RT Turn Cancel**
+  tools; the node has `rt_prompt`, Run Turn and Cancel Turn. Every one submits
+  with `wait_ms=0` and polls `/turn/<id>`. The panel polls on a Qt timer and
+  never blocks; the shelf and node have no timer, so they poll for a bounded
+  window (`RT_TURN_POLL_S`, default 2 s) and leave the turn running after that.
+  Offline by default; `RT_SIDECAR_LIVE_MODEL=1` turns the same controls live.
 - **Three surfaces.** A Python Panel (primary), a shelf tool (secondary), and an
   optional node. The viewport camera dropdown is not an extension point.
 - **One adapter.** Every surface calls the same process-wide adapter, so they
@@ -187,9 +190,9 @@ stdlib APIs may still fail.
 py -3.12 -m pytest tests -q -p no:cacheprovider
 ```
 
-- **Python 3.12 (local, Windows):** 220 passed, 18 skipped (3.14-only sidecar
+- **Python 3.12 (local, Windows):** 222 passed, 18 skipped (3.14-only sidecar
   lifecycle tests, plus the POSIX permission test).
-- **Python 3.14 (local, Windows):** 237 passed, 1 skipped (the POSIX
+- **Python 3.14 (local, Windows):** 239 passed, 1 skipped (the POSIX
   permission test).
 - **CI, Ubuntu:** 221 passed, 17 skipped on both 3.12 and 3.13 — the POSIX
   permission test runs there instead of skipping.

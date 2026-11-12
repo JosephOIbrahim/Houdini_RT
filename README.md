@@ -4,7 +4,7 @@
 
 # RT Toggle
 
-**Houdini 22 runtime on/off for HoudiniRT — v0.1.2**
+**Houdini 22 runtime on/off for HoudiniRT — v0.1.3**
 
 ## The answer first
 
@@ -29,6 +29,10 @@ cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
 - **In-process guard.** Any attempt to load the full 3.14 `site-packages` under
   Houdini's 3.13 interpreter is refused with the ABI blocker named. Refusal is a
   designed outcome, not a crash.
+- **One turn at a time, from the panel.** A prompt field, a run button and a
+  cancel button. Submit returns immediately (202) and a Qt timer polls
+  `/turn/<id>` until the turn ends, so Houdini stays responsive. Offline by
+  default; `RT_SIDECAR_LIVE_MODEL=1` turns the same control into a live turn.
 - **Three surfaces.** A Python Panel (primary), a shelf tool (secondary), and an
   optional node. The viewport camera dropdown is not an extension point.
 - **One adapter.** Every surface calls the same process-wide adapter, so they
@@ -183,20 +187,18 @@ stdlib APIs may still fail.
 py -3.12 -m pytest tests -q -p no:cacheprovider
 ```
 
-- **Python 3.12 (local, Windows):** 207 passed, 18 skipped (3.14-only sidecar
+- **Python 3.12 (local, Windows):** 220 passed, 18 skipped (3.14-only sidecar
   lifecycle tests, plus the POSIX permission test).
-- **Python 3.14 (local, Windows):** 224 passed, 1 skipped (the POSIX
+- **Python 3.14 (local, Windows):** 237 passed, 1 skipped (the POSIX
   permission test).
-- **CI, Ubuntu:** 208 passed, 17 skipped on both 3.12 and 3.13 — the POSIX
-  permission test runs there instead of skipping.
-- **CI, Windows:** 222 passed, 3 skipped on 3.14 — `synapse` is not installed on
-  the runner, so the two guarded host-turn tests skip as well as the POSIX one.
 
-The local and CI counts differ for host reasons, not code reasons: local runs
-have `synapse` available, and Windows cannot exercise POSIX permission bits.
+CI runs the same suite on Ubuntu 3.12/3.13 and Windows 3.14. Its counts differ
+from local by host: Ubuntu runs the POSIX permission test that Windows skips,
+and the Windows runner has no `synapse`, so the two guarded host-turn tests
+skip there. The CI figures for this release are recorded after the first run
+at this commit.
 
-The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`. CI runs
-3.12/3.13 on Ubuntu and the full suite on 3.14 on Windows.
+The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`.
 
 ---
 
@@ -215,6 +217,9 @@ The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`. CI runs
 **Manual, not machine-verified:**
 
 - Pane render, shelf click, parm event dispatch, gear-menu duplicate and uninstall.
+- The panel's turn control has not been clicked in Houdini. The client and
+  poller are tested against a real loopback server, and the widget wiring is
+  checked statically; the click itself is still a person.
 - The planned 3.13 in-process sibling runtime (G8) — no tree has been installed.
 - A network model turn without credentials; the offline probe is the default.
 
@@ -249,4 +254,4 @@ License: TBD. No license file is included; licensing is the owner's decision.
 
 ---
 
-*RT Toggle v0.1.2 · Myth and Logic*
+*RT Toggle v0.1.3 · Myth and Logic*

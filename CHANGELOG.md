@@ -13,6 +13,38 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-12
+
+### Added
+
+- **Turn client** (`rt_runtime/turn_control.py`): `TurnControl` with
+  `submit`/`status`/`cancel`, returning the raw `(http_status, body)` pair so a
+  202 is not read as failure. The token is read from the sidecar state dir on
+  every call, because a relaunch rotates it; nothing is cached.
+- **Turn poller**: `TurnPoller.refresh()` follows one admitted turn with no Qt,
+  no threads and no Houdini, and turns 404/401/transport faults into a terminal
+  error state instead of raising.
+- **Adapter accessors**: `SidecarAdapter.turn_control()` returns a bound client
+  only when a probe says `ready` and a token reads; `RuntimeAdapter.turn_control()`
+  forwards it and returns `None` for in-process targets.
+- **Panel turn control**: a prompt field, **Run turn** and **Cancel turn**, and
+  a status label. Submit uses `wait_ms=0` (202) and a 250 ms Qt timer polls
+  `/turn/<id>`, so Houdini never blocks on a turn. Offline by default;
+  `RT_SIDECAR_LIVE_MODEL=1` labels and runs a live turn.
+
+### Changed
+
+- `rt_panel.pypanel` is regenerated from `houdini/rt_panel.py`, and a test now
+  fails if the two copies drift.
+
+### Tests
+
+- 11 new tests in `tests/test_turn_control.py` (token read, rotation, 202,
+  terminal poll, `wait_ms`, 404, cooperative cancel, unknown-key rejection,
+  both adapter paths) and 2 new UI contract tests.
+- Local Windows: 220 passed / 18 skipped on CPython 3.12.10, 237 passed /
+  1 skipped on CPython 3.14.2.
+
 ## [0.1.2] - 2026-11-12
 
 ### Added

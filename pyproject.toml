@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "houdini-rt-toggle"
-version = "0.1.2"
+version = "0.1.3"
 description = "Pure-Python on/off switch for the HoudiniRT runtime toggle"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }

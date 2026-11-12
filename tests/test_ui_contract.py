@@ -189,6 +189,44 @@ def test_panel_script_uses_adapter():
     assert not problems, "Python panel contract violations:\n  " + "\n  ".join(problems)
 
 
+def test_panel_script_wires_the_turn_control():
+    """The panel must submit without blocking and must offer a cancel."""
+    _skip_without(PYPANELS, ".pypanel")
+    problems: list[str] = []
+    for path in PYPANELS:
+        text = _read(path)
+        if "turn_control" not in text:
+            problems.append(f"{path.name}: script never calls adapter.turn_control()")
+        if "TurnPoller" not in text:
+            problems.append(f"{path.name}: script never polls a submitted turn")
+        if "wait_ms=0" not in text:
+            problems.append(
+                f"{path.name}: submit must use wait_ms=0 and poll, not block"
+            )
+        if ".cancel(" not in text:
+            problems.append(f"{path.name}: script has no cancel path")
+    assert not problems, "Python panel turn-control contract violations:\n  " + "\n  ".join(problems)
+
+
+def test_panel_readable_copy_matches_the_pypanel_script():
+    """rt_panel.py and the embedded CDATA must carry the same script."""
+    _skip_without(PYPANELS, ".pypanel")
+    readable = EXT_ROOT / "houdini" / "rt_panel.py"
+    if not readable.is_file():
+        pytest.skip("houdini/rt_panel.py is absent")
+    script = readable.read_text(encoding="utf-8")
+    problems: list[str] = []
+    for path in PYPANELS:
+        if path.name != "rt_panel.pypanel":
+            continue
+        root = ET.fromstring(_read(path))
+        scripts = [e for e in root.iter() if _localname(e.tag) == "script"]
+        embedded = (scripts[0].text or "") if scripts else ""
+        if embedded.strip() != script.strip():
+            problems.append(f"{path.name}: embedded script differs from rt_panel.py")
+    assert not problems, "Panel copies are out of sync:\n  " + "\n  ".join(problems)
+
+
 # ---------------------------------------------------------------------------
 # shelf
 # ---------------------------------------------------------------------------

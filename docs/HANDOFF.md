@@ -1,11 +1,9 @@
 # RT Toggle — session hand-off (2026-11-12)
 
-Latest main: **`v0.1.2`** release, tag on `d3e2bc8` (sidecar turn loop). The
-commits after it, `b0e9c02` and this one, are documentation only.
+Latest main: **0.1.3 in the tree, not yet released.** `v0.1.2` remains the
+published tag (`d3e2bc8`); the asset attached to it was rebuilt from `cb1ce4e`.
 Repo: `%HOUDINI_RT_ROOT%\extensions\rt_toggle`
 Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
-Release asset: `dist/houdini-rt-toggle-0.1.2.zip`, 50 members, 228,170 bytes,
-SHA-256 `2c37b72a768285bd174b6dde552459905b0fec5043d797530524b6add731afdc`.
 
 ## What is proven live
 
@@ -40,19 +38,30 @@ SHA-256 `2c37b72a768285bd174b6dde552459905b0fec5043d797530524b6add731afdc`.
   loop is shut down before the server stops.
 - 32 new turn-loop tests and 16 new transport route tests.
 
+## What v0.1.3 added
+
+- `rt_runtime/turn_control.py`: `TurnControl` (`submit`/`status`/`cancel`,
+  returning `(http_status, body)`) and `TurnPoller`, which follows a turn with
+  no Qt and no Houdini. The token is read per call; a relaunch rotates it.
+- `SidecarAdapter.turn_control()` returns a client only when a probe says
+  `ready` and a token reads; `RuntimeAdapter.turn_control()` forwards it and
+  returns `None` for in-process targets.
+- The panel now submits a turn: prompt field, **Run turn**, **Cancel turn**, a
+  250 ms `QTimer` poll, and a status label. `wait_ms=0`, so the UI never blocks.
+  Offline by default; `RT_SIDECAR_LIVE_MODEL=1` runs a live turn.
+- `rt_panel.pypanel` is regenerated from `rt_panel.py`; a test fails on drift.
+
 ## Counts
 
 ```
-local Windows   3.12: 207 passed, 18 skipped, 18 subtests
-local Windows   3.14: 224 passed,  1 skipped
-CI Ubuntu       3.12: 208 passed, 17 skipped
-CI Ubuntu       3.13: 208 passed, 17 skipped
-CI Windows      3.14: 222 passed,  3 skipped
+local Windows   3.12: 220 passed, 18 skipped
+local Windows   3.14: 237 passed,  1 skipped
 ```
 
-CI run `43238913154` at `b0e9c02` — all four jobs success. Local and CI differ
-by host: Ubuntu runs the POSIX permission test that Windows skips, and the
-Windows runner has no `synapse`, so the two guarded host-turn tests skip there.
+CI figures for 0.1.3 are recorded after the first run at this commit. The
+local/CI gap keeps its two causes: Ubuntu runs the POSIX permission test that
+Windows skips, and the Windows runner has no `synapse`, so the two guarded
+host-turn tests skip there.
 
 ## Key paths
 
@@ -83,10 +92,11 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
 
 ## Open items
 
-1. **A caller for the turn loop.** `POST /turn` works and is tested, but no
-   surface submits a turn: the panel and shelf still call the adapter, and
-   SYNAPSE does not call the route. The next step is one client, then a UI
-   control that uses it.
+1. **Prove the turn control in Houdini.** The client and poller are tested over
+   a real loopback server and the widget wiring is checked statically, but
+   nobody has clicked **Run turn** in the GUI. The three cases to run: sidecar
+   stopped gives a clear ERROR with no traceback; a running turn reaches a
+   terminal result with the UI responsive; Cancel mid-turn yields cancelled.
 2. **GUI checks.** Pane render, shelf click, parm event dispatch, gear-menu
    duplicate, uninstall (Install Check 6) are still manual.
 3. **3.13 in-process sibling runtime.** Planned, not installed; the ABI refusal
@@ -96,7 +106,7 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
    default local proxy is `http://127.0.0.1:11434/v1/messages`; the real
    endpoint is `https://api.anthropic.com/v1/messages`.
 5. **Release.** `v0.1.2` is the published release (turn loop); `v0.1.1` and
-   `v0.1.0` remain prior tags.
+   `v0.1.0` remain prior tags. `0.1.3` is in the tree awaiting its release.
 6. **Licensing.** TBD; no license file is included.
 
 ## Cautions

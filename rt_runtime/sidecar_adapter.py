@@ -1281,6 +1281,35 @@ class SidecarAdapter:
                 snap["health"] = {"ok": False, "detail": repr(exc), "code": None}
         return snap
 
+    # -- turns --------------------------------------------------------------
+
+    def turn_control(self) -> Any:
+        """Return a bound turn client, or ``None`` when no sidecar is ready.
+
+        Read-only: one supervisor probe, no spawn, no write. The token is read
+        per call later, because a restart rotates it.
+        """
+        try:
+            supervisor = self._supervisor(self.policy())
+            report = supervisor.probe()
+        except Exception:  # noqa: BLE001 - "not running" is a normal answer
+            return None
+        if _state_value(getattr(report, "state", "")) != _STATUS_READY:
+            return None
+        base_url = self.base_url_for(report)
+        state_dir = self.state_dir
+        if base_url is None or state_dir is None:
+            return None
+
+        from .turn_control import TurnControl
+
+        control = TurnControl(base_url=base_url, state_dir=Path(state_dir))
+        try:
+            control.token()
+        except Exception:  # noqa: BLE001 - no readable token, no usable surface
+            return None
+        return control
+
     # -- probe --------------------------------------------------------------
 
     def probe(self) -> dict[str, Any]:

@@ -590,6 +590,18 @@ class RuntimeAdapter:
                 target_site_packages=target.site_packages,
             )
 
+    # -- turns --------------------------------------------------------------
+
+    def turn_control(self) -> Any | None:
+        """Return the sidecar turn client, or ``None`` for in-process targets.
+
+        Surfaces call this after activation; ``None`` means there is nothing to
+        submit to yet, not that anything failed.
+        """
+        if self._sidecar is None:
+            return None
+        return self._sidecar.turn_control()
+
     # -- state file ---------------------------------------------------------
 
     def _read_state(self) -> dict[str, Any]:

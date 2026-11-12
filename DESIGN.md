@@ -19,8 +19,8 @@ These are the facts the whole design rests on.
 |---|---|
 | Houdini 22.0.429 embeds Python 3.13.10 | `D:\Houdini_AI_Reference\runtime_smoke_evidence.json` (`python_version`), taken from a trusted hython 22.0.429 smoke run |
 | The Houdini interpreter is a 3.13 build | `C:\Program Files\Side Effects Software\Houdini 22.0.429\bin\python313.dll`; matching `PyImath_Python3_13-3_2.dll` in the same folder |
-| HoudiniRT is a separate Python 3.14 distribution | `%HOUDINI_RT_ROOT%\libs\python314.lib`; `pythonw.exe` references `python314.dll`; `Lib\site-packages` contains 104 `cp314` `.pyd` files out of 175 `.pyd` files total |
-| HoudiniRT root has no `python.exe` | only `pythonw.exe` at `%HOUDINI_RT_ROOT%\` |
+| HoudiniRT is a separate Python 3.14 distribution | `%HOUDINI_RT_ROOT%\libs\python314.lib`; `pythonw.exe` references `python314.dll`; `Lib\site-packages` contains 108 `cp314` `.pyd` files out of 195 `.pyd` files total |
+| The runtime tree carries its own interpreter (since the 2026-11-11 repair) | `%HOUDINI_RT_ROOT%\python.exe` reports `3.14.2`; `python314.dll` sits beside it |
 | The `Scripts\*.exe` wrappers launch a 3.14 interpreter | `Scripts\pytest.exe` embeds the shebang `#!C:\Python314\python.exe`; `C:\Python314\python.exe` reports `3.14.2 (tags/v3.14.2:df79316, Dec 5 2025) [MSC v.1944 64 bit (AMD64)]`. There are 102 such wrappers. |
 | `.pypanel` format | installed example `C:\Program Files\Side Effects Software\Houdini 22.0.429\houdini\help\examples\python_panels\nodepath.pypanel` |
 | `.shelf` format | installed help `C:\Program Files\Side Effects Software\Houdini 22.0.429\houdini\help\shelf.zip`, entry `config_file.txt`, "Overview" |

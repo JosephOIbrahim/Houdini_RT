@@ -91,14 +91,16 @@ The package carries no machine path. Its `value` is
 `HOUDINI_RT_ROOT` before it reads the package. Set it in `%PREF%\houdini.env`:
 
 ```
-HOUDINI_RT_ROOT = "D:/HoudiniRT"
+HOUDINI_RT_ROOT = "<absolute path to the HoudiniRT runtime root>"
 ```
 
-Use the real HoudiniRT distribution root on your machine, with forward slashes
-or escaped backslashes. Exporting the same variable in the environment Houdini
-starts from works too. If you would rather not use the variable, replace the
-`value` with your absolute extension path before copying. Either way the value
-must name the extension root, never `Lib\site-packages`.
+The runtime root is the folder that holds `python.exe`, `Lib\site-packages` and
+`extensions\rt_toggle`: the Python 3.14 distribution, not the C++ Hydra render
+delegate, which is a separate project with its own repository. Use forward
+slashes or escaped backslashes. Exporting the same variable in the environment
+Houdini starts from works too. If you would rather not use the variable,
+replace the `value` with your absolute extension path before copying. Either
+way the value must name the extension root, never `Lib\site-packages`.
 
 The JSON uses only documented package keys:
 

@@ -204,3 +204,16 @@ jobs:
             exit 1
           fi
           echo "Clean: no machine-specific absolute paths or secret-shaped tokens in tracked files."
+
+      # A hardcoded interpreter path silently launches a different Python than
+      # the one the extension ships with. This is how the sidecar used to fall
+      # back to a bare CPython install.
+      - name: Reject hardcoded interpreter launchers in Python sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -rnIE 'C:[\\/]+Python[0-9]+[\\/]+python' --include='*.py' . ; then
+            echo "::error::a Python source hardcodes an interpreter path; resolve it from the runtime tree, RT_SIDECAR_PYTHON, or the target's launcher"
+            exit 1
+          fi
+          echo "Clean: no hardcoded interpreter paths in Python sources."

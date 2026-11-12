@@ -2,7 +2,7 @@
 
 Run with the 3.14 interpreter that will launch the sidecar::
 
-    C:\\Python314\\python.exe -m pytest tests -q
+    python -m pytest tests -q
 
 Every test that starts a child either stops it or lets the fixture force-stop
 it, so a failure never leaves an orphan process behind.

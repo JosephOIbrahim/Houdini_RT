@@ -1767,12 +1767,14 @@ class SidecarAdapter:
 def _resolve_launcher(
     settings: SidecarSettings, runtime_home: Path | None
 ) -> Path | None:
-    """Pick the launcher: config, env, repaired runtime tree, then CPython 3.14.
+    """Pick the launcher: config, then env, then the runtime tree's interpreter.
 
-    Pre-repair the runtime tree has ``pythonw.exe`` but no ``python.exe``, no
-    ``python314.dll`` and no core DLLs, so ``C:\\Python314\\python.exe`` is the
-    tested launcher. Post-repair the runtime tree's own ``python.exe`` wins by
-    virtue of being listed before it.
+    Only the runtime tree is trusted. A launcher from another CPython starts
+    without this runtime's ``site-packages``, which silently breaks the
+    runtime-first guarantee, so there is no cross-install fallback: if the tree
+    has no ``python.exe``, set ``launcher`` in the target or
+    ``RT_SIDECAR_PYTHON``. The tree has carried its own interpreter since the
+    2026-11-11 repair.
     """
     candidates: list[Path] = []
     if settings.launcher is not None:
@@ -1783,13 +1785,10 @@ def _resolve_launcher(
     if runtime_home is not None:
         candidates.append(Path(runtime_home) / "python.exe")
         candidates.append(Path(runtime_home) / "pythonw.exe")
-    candidates.append(Path("C:/Python314/python.exe"))
-    candidates.append(Path(sys.executable))
-
     for candidate in candidates:
         if _safe_is_file(candidate):
             return Path(os.path.abspath(os.fspath(candidate)))
-    return candidates[0] if candidates else None
+    return None
 
 
 def _resolve_host_script(settings: SidecarSettings) -> Path | None:

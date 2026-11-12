@@ -4,7 +4,7 @@
 Run from the extension root with either interpreter::
 
     py -3.12 -m pytest tests/test_turn_loop.py -q
-    C:\\Python314\\python.exe -m pytest tests/test_turn_loop.py -q
+    python -m pytest tests/test_turn_loop.py -q
 
 Standard library only. No HTTP, no Houdini, no model call: every entry point
 here is a local fake. Timing tests use short real deadlines (50-250 ms) and a

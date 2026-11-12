@@ -1,7 +1,7 @@
 # CI for the RT Toggle extension scaffold (houdini-rt-toggle).
 #
 # What this workflow covers:
-#   - the test suite on CPython 3.12 and 3.13
+#   - the test suite on CPython 3.12, 3.13 and 3.14
 #   - parse validity of every shipped Houdini surface file
 #   - absence of machine-specific absolute paths and secret-shaped tokens
 #
@@ -27,6 +27,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Tests, once per supported interpreter. 3.13 matters because Houdini
   # 22.0.429 embeds Python 3.13; 3.12 is the older floor we still support.
+  # 3.14 is the sidecar launcher: tests/test_lifecycle.py skips on older
+  # interpreters and only runs in this leg.
   # ---------------------------------------------------------------------------
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
@@ -37,7 +39,7 @@ jobs:
       # interesting signal and should not be hidden by 3.12 passing.
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - name: Check out the repository
         uses: actions/checkout@v4

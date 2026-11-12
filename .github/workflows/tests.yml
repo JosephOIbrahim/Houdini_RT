@@ -12,8 +12,8 @@
 # HoudiniRT Python 3.14 distribution is exercised here. Those paths are checked
 # by hand on a real workstation (see verification/RUN.md).
 #
-# Action versions are the documented majors: actions/checkout@v4 and
-# actions/setup-python@v5.
+# Action versions are the documented majors: actions/checkout@v7 and
+# actions/setup-python@v7.
 
 name: tests
 
@@ -44,10 +44,10 @@ jobs:
         python-version: ["3.12", "3.13"]
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -71,10 +71,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -94,10 +94,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 

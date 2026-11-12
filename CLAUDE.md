@@ -42,6 +42,7 @@ s4 mesh + camera sync (first light). `specs/build-spec.md` holds the acceptance 
 ## Layout
 - `src/furnace/` — step 1 kernel and host (`furnace.comp`, `furnace_host.cpp`). Step 2 grows here.
 - `src/hdRT/` — the delegate (s3+). `verify/` — the exams (read-only to you). `drafts/` — candidate exams awaiting human review.
+- `extensions/rt_toggle/` — the Python UI/runtime toggle; its external CPython runtime is not committed. Renderer milestone generators must not edit it unless it is the assigned task.
 - `DECISIONS.md` — durable lessons, dated. `claude-progress.md` — what is done and the current delta.
 
 ## Agent invariants

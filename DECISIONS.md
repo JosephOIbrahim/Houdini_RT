@@ -1,5 +1,11 @@
 # DECISIONS — durable lessons, dated
 
+## 2026-11-12 (rt_toggle consolidation)
+- The Python extension enters as `extensions/rt_toggle/` by git subtree, preserving its history from source commit d1cac89 (the Apache-2.0 licensing commit after v0.1.7 at 8e30cce). Source repository: JosephOIbrahim/houdini-rt-toggle.
+- Licensing is Apache-2.0 by Joe's explicit owner decision. The extension carries its own LICENSE and its release builder/audit require it.
+- The CPython runtime remains external. Runtime paths use HOUDINI_RT_ROOT; the extension path is independently RT_TOGGLE_ROOT. The monorepo is source/build storage, not a Python distribution.
+- Renderer build, sealed exams, orchestrator and TypeScript harness are unchanged. The extension keeps its own interpreter matrix in a root-level rt-toggle-tests workflow.
+
 ## 2026-10-04 (seed from the cloud workspace runs)
 - Texture-LUT mode for the OpenPBR BSDF is the production mode: 289 KB SPIR-V, ~2.4 s pipeline build on a software driver. Embedded-array mode produced 1.2 MB SPIR-V and ran the software driver's compiler out of memory (~6 GB). Treat array mode as a diagnostic only.
 - The CPU reference table was produced with array LUTs and the GPU uses filtered textures. No offset was visible at 65k samples per row; if a row drifts near tolerance on real hardware, that filtering difference is the first suspect, not the sampler.

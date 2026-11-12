@@ -29,12 +29,12 @@ Names fixed by the extension files (do not rename independently):
 
 There are two different files called `rt_toggle.json`:
 
-- `%HOUDINI_RT_ROOT%\extensions\rt_toggle\rt_toggle.json`
+- `%RT_TOGGLE_ROOT%\rt_toggle.json`
   is the runtime target config read by `rt_runtime.session.get_adapter()`. It is
   owned by the runtime component and is read in place; it is not installed.
-- `%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\packages\rt_toggle.json`
+- `%RT_TOGGLE_ROOT%\houdini\packages\rt_toggle.json`
   is the Houdini package file installed in Step 1. It appends the extension root
-  to `PYTHONPATH` and sets `RT_TOGGLE_ROOT` to that same root for icon lookup.
+  named by `RT_TOGGLE_ROOT` to `PYTHONPATH`. Set both roots in `houdini.env`.
 
 ---
 
@@ -65,9 +65,9 @@ Throughout this file, `%PREF%` means the value printed by
 
 ---
 
-## Step 1 of 6 — Copy the package file (imports and icon root)
+## Step 1 of 6 — Copy the package file (runtime imports)
 
-Source: `%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\packages\rt_toggle.json`
+Source: `%RT_TOGGLE_ROOT%\houdini\packages\rt_toggle.json`
 
 Copy it to:
 
@@ -81,28 +81,27 @@ For the default preference directory that is:
 %USERPROFILE%\Documents\houdini22.0\packages\rt_toggle.json
 ```
 
-What the file does: it appends the extension root to `PYTHONPATH` at startup and
-sets `RT_TOGGLE_ROOT` to that same root. That is the folder that contains
-`rt_runtime`, so `import rt_runtime` works in Houdini's Python and the panel no
-longer shows "rt_runtime not on sys.path". The second variable lets the shelf
-and panel resolve their SVG icons in `houdini/icons`. It does not touch
-`HOUDINI_PATH`, `HOUDINI_TOOLBAR_PATH`, or any HoudiniRT site-packages directory.
+What the file does: it appends the extension root named by `RT_TOGGLE_ROOT` to
+`PYTHONPATH` at startup. That is the folder that contains `rt_runtime`, so
+`import rt_runtime` works in Houdini's Python and the panel no longer shows
+"rt_runtime not on sys.path". The same variable lets the shelf and panel resolve
+their SVG icons in `houdini/icons`. It does not touch `HOUDINI_PATH`,
+`HOUDINI_TOOLBAR_PATH`, or any HoudiniRT site-packages directory.
 
-The package carries no machine path. Its `value` is
-`"$HOUDINI_RT_ROOT/extensions/rt_toggle"`, so Houdini must know
-`HOUDINI_RT_ROOT` before it reads the package. Set it in `%PREF%\houdini.env`:
+The package carries no machine path. Its `value` is `"$RT_TOGGLE_ROOT"`, so
+Houdini must know both roots before it reads the package. Set them in
+`%PREF%\houdini.env`:
 
 ```
-HOUDINI_RT_ROOT = "<absolute path to the HoudiniRT runtime root>"
+HOUDINI_RT_ROOT = "<absolute path to the external HoudiniRT runtime root>"
+RT_TOGGLE_ROOT = "<absolute path to the extension root>"
 ```
 
-The runtime root is the folder that holds `python.exe`, `Lib\site-packages` and
-`extensions\rt_toggle`: the Python 3.14 distribution, not the C++ Hydra render
-delegate, which is a separate project with its own repository. Use forward
-slashes or escaped backslashes. Exporting the same variable in the environment
-Houdini starts from works too. If you would rather not use the variable,
-replace the `value` with your absolute extension path before copying. Either
-way the value must name the extension root, never `Lib\site-packages`.
+The runtime root is the folder that holds `python.exe` and `Lib\site-packages`:
+the external Python 3.14 distribution. The extension root is the folder holding
+`rt_toggle.json`, `rt_runtime` and `houdini`, now normally
+`Houdini_RT/extensions/rt_toggle` in the source repository. They are independent;
+do not point one at the other. Use forward slashes or escaped backslashes.
 
 The JSON uses only documented package keys:
 
@@ -122,7 +121,7 @@ documented keyword list, so it is deliberately omitted here.
 Source:
 
 ```
-%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\rt_panel.pypanel
+%RT_TOGGLE_ROOT%\houdini\rt_panel.pypanel
 ```
 
 Copy it to:
@@ -159,8 +158,8 @@ directory so the bootstrap finds its module next to the `.shelf` file.
 Sources:
 
 ```
-%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\rt_shelf.shelf
-%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\rt_shelf.py
+%RT_TOGGLE_ROOT%\houdini\rt_shelf.shelf
+%RT_TOGGLE_ROOT%\houdini\rt_shelf.py
 ```
 
 Copy both to:
@@ -199,7 +198,7 @@ Alternative (no copies): append the extension's `houdini` folder to
 `HOUDINI_TOOLBAR_PATH` in `%PREF%\houdini.env`, for example
 
 ```
-HOUDINI_TOOLBAR_PATH = "%HOUDINI_RT_ROOT%/extensions/rt_toggle/houdini;&"
+HOUDINI_TOOLBAR_PATH = "%RT_TOGGLE_ROOT%/houdini;&"
 ```
 
 `houdini.env` is read at startup only. The package JSON intentionally does not
@@ -213,7 +212,7 @@ Houdini's shelf search path.
 Source:
 
 ```
-%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\PaneTabTypeMenu.xml
+%RT_TOGGLE_ROOT%\houdini\PaneTabTypeMenu.xml
 ```
 
 Copy it to:
@@ -261,7 +260,7 @@ Houdini Python Shell (main application thread).
 ```python
 import hou
 
-pypanel_path = "%HOUDINI_RT_ROOT%/extensions/rt_toggle/houdini/rt_panel.pypanel"
+pypanel_path = "%RT_TOGGLE_ROOT%/houdini/rt_panel.pypanel"
 hou.pypanel.installFile(pypanel_path)
 
 # Verify the interface is now installed.
@@ -352,7 +351,7 @@ Restart Houdini, then run the uninstall check in
 removing the package file is enough to remove it from `PYTHONPATH`.
 
 If an earlier toggle left the runtime ON, the adapter wrote
-`%HOUDINI_RT_ROOT%\extensions\rt_toggle\.rt_toggle_state.json`
+`%RT_TOGGLE_ROOT%\.rt_toggle_state.json`
 (default state file). The uninstall does not need to delete it; the next session
 will not load the runtime unless a toggle is pressed again. Delete it only if
 you want a completely clean slate.
@@ -373,7 +372,7 @@ Read in place, not installed: `rt_runtime\` and the runtime config
 `rt_toggle.json` at the extension root.
 
 Source root:
-`%HOUDINI_RT_ROOT%\extensions\rt_toggle`
+`%RT_TOGGLE_ROOT%`
 
 Nothing in this install writes to `D:\Houdini_AI_Reference` or to
 `%HOUDINI_RT_ROOT%\Lib\site-packages`.

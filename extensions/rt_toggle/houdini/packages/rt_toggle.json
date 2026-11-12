@@ -4,13 +4,8 @@
     "env": [
         {
             "var": "PYTHONPATH",
-            "value": "$HOUDINI_RT_ROOT/extensions/rt_toggle",
+            "value": "$RT_TOGGLE_ROOT",
             "method": "append"
-        },
-        {
-            "var": "RT_TOGGLE_ROOT",
-            "value": "$HOUDINI_RT_ROOT/extensions/rt_toggle",
-            "method": "set"
         }
     ]
 }

@@ -146,6 +146,7 @@ export PXR_PLUGINPATH_NAME="$(cygpath -m "$PWD/build/plugin_stage")"
 | `src/furnace/` | Steps 1 and 2: standalone Vulkan kernels |
 | `src/hdRT/` | The render delegate (on `integration` and `claude/s4-first-light`) |
 | `orchestrator/`, `agents/` | The night loop and the prompts of its roles |
+| `extensions/rt_toggle/` | Python UI/runtime toggle; CPython runtime stays external; not part of the Hydra delegate build |
 | `DECISIONS.md` | Lessons and decisions, dated and append-only |
 | `third_party/` | Reference code and the test asset, each with its own licence |
 
@@ -177,7 +178,7 @@ Pause and resume were checked by hand in the Solaris viewport on the step 3 buil
 
 ### <img src="assets/readme/umber.svg" width="11" height="11" alt=""> 10. Licence and credits
 
-Houdini_RT is released under the Apache License 2.0; see `LICENSE`. Files in `src/hdRT` adapted from Pixar's hdEmbree keep Pixar's headers and the Tomorrow Open Source Technology License; `src/hdRT/NOTICE.md` lists them. Code under `third_party/` keeps its own licence: Pixar's hdEmbree example delegate (Tomorrow Open Source Technology License 1.0), Sascha Willems' Vulkan samples (MIT), and the usd-wg Utah teapot (CC0). Adobe's OpenPBR BSDF (Apache 2.0) is used from its own checkout and is not included.
+Houdini_RT is released under the Apache License 2.0; see `LICENSE`. `extensions/rt_toggle/` is Apache-2.0 too and carries its own `LICENSE` for standalone release archives; its CPython runtime is external and is not part of this repository. Files in `src/hdRT` adapted from Pixar's hdEmbree keep Pixar's headers and the Tomorrow Open Source Technology License; `src/hdRT/NOTICE.md` lists them. Code under `third_party/` keeps its own licence: Pixar's hdEmbree example delegate (Tomorrow Open Source Technology License 1.0), Sascha Willems' Vulkan samples (MIT), and the usd-wg Utah teapot (CC0). Adobe's OpenPBR BSDF (Apache 2.0) is used from its own checkout and is not included.
 
 Houdini, Solaris, Karma and the HDK are products of SideFX. This project is independent and not affiliated with or endorsed by SideFX. Karma appears here only as a reference renderer in the exams.
 

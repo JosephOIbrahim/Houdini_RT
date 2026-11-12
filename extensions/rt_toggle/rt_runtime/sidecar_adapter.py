@@ -194,10 +194,21 @@ def _adapter_types() -> tuple[Any, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _expand_runtime_root(value: Any) -> str:
+    """Expand only the documented runtime-root token, leaving other $VARs alone."""
+    text = str(value)
+    if "$HOUDINI_RT_ROOT" not in text and "${HOUDINI_RT_ROOT}" not in text:
+        return text
+    root = os.environ.get("HOUDINI_RT_ROOT", "").strip()
+    if not root:
+        raise ValueError(f"HOUDINI_RT_ROOT is required by path value {text!r}")
+    return text.replace("${HOUDINI_RT_ROOT}", root).replace("$HOUDINI_RT_ROOT", root)
+
+
 def _coerce_path(value: Any, base: Path | None = None) -> Path | None:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
-    path = Path(str(value)).expanduser()
+    path = Path(_expand_runtime_root(value)).expanduser()
     if base is not None and not path.is_absolute():
         path = base / path
     return Path(os.path.abspath(os.fspath(path)))

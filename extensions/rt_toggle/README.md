@@ -53,7 +53,8 @@ Full detail, exact `hou` calls and uninstall are in **[INSTALL.md](INSTALL.md)**
 `%USERPROFILE%\Documents\houdini22.0`). `%HOUDINI_RT_ROOT%` = the HoudiniRT
 distribution root.
 
-1. **Make it importable.** Set `HOUDINI_RT_ROOT` in `%PREF%\houdini.env`; copy
+1. **Make it importable.** Set `HOUDINI_RT_ROOT` to the external CPython root and
+   `RT_TOGGLE_ROOT` to this extension root in `%PREF%\houdini.env`; copy
    `houdini/packages/rt_toggle.json` to `%PREF%\packages\`. Restart.
 2. **Install the panel.** Copy `houdini/rt_panel.pypanel` to
    `%PREF%\python_panels\`. Keep the interface name `RT_Toggle`.
@@ -68,9 +69,9 @@ distribution root.
 **Never** put `%HOUDINI_RT_ROOT%\Lib\site-packages` on `PYTHONPATH`, in a package
 JSON, in `houdini.env`, or in a startup script. The guard exists to keep it out.
 
-The icons resolve through `RT_TOGGLE_ROOT`, which the package JSON now sets.
-When the shelf pair is copied into `%PREF%\toolbar\` instead, set that variable
-too, or the tools fall back to no icon.
+The icons resolve through `RT_TOGGLE_ROOT`. Set it explicitly; the package JSON
+uses it for `PYTHONPATH` but cannot discover it. Without it, imports and icons
+cannot resolve.
 
 For putting the controls over the viewport itself, see
 **[docs/ARTIST_LAUNCH.md](docs/ARTIST_LAUNCH.md)** — HUD handles are the native
@@ -135,8 +136,9 @@ sequenceDiagram
 
 ## Runtime configuration
 
-`rt_toggle.json` at the extension root names the target. Relative paths resolve
-against that file's folder.
+`rt_toggle.json` at the extension root names the target. `$HOUDINI_RT_ROOT` and
+`${HOUDINI_RT_ROOT}` name the external CPython distribution; other relative paths
+resolve against that file's folder.
 
 ```json
 {
@@ -144,9 +146,9 @@ against that file's folder.
   "default": "houdini_rt",
   "targets": {
     "houdini_rt": {
-      "home": "../..",
+      "home": "$HOUDINI_RT_ROOT",
       "python_version": "3.14",
-      "site_packages": "../../Lib/site-packages",
+      "site_packages": "${HOUDINI_RT_ROOT}/Lib/site-packages",
       "allow_pure_python_only": false
     }
   }

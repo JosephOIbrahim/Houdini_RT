@@ -3,20 +3,20 @@
   "default": "houdini_rt_sidecar",
   "targets": {
     "houdini_rt_sidecar": {
-      "home": "../..",
+      "home": "$HOUDINI_RT_ROOT",
       "python_version": "3.14",
-      "site_packages": "../../Lib/site-packages",
+      "site_packages": "${HOUDINI_RT_ROOT}/Lib/site-packages",
       "entry_point": "synapse.cognitive.agent_loop.run_turn",
       "mode": "sidecar",
       "sidecar": {
-        "launcher": "../../python.exe",
+        "launcher": "${HOUDINI_RT_ROOT}/python.exe",
         "package_precedence": "runtime-first"
       }
     },
     "houdini_rt_in_process": {
-      "home": "../..",
+      "home": "$HOUDINI_RT_ROOT",
       "python_version": "3.14",
-      "site_packages": "../../Lib/site-packages",
+      "site_packages": "${HOUDINI_RT_ROOT}/Lib/site-packages",
       "entry_point": null,
       "env": {},
       "allow_pure_python_only": false

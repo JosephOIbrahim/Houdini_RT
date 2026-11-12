@@ -39,12 +39,14 @@ explain a result either way. Select `verification/rt_toggle_sidecar.json`
 explicitly: the shipped default target is in-process and is designed to refuse
 the cp314 tree, so without this override the ON and turn steps cannot pass.
 
-In PowerShell, after setting `HOUDINI_RT_ROOT` to the HoudiniRT root:
+In PowerShell, set `HOUDINI_RT_ROOT` to the external CPython distribution and
+`RT_TOGGLE_ROOT` to this extension in the Houdini_RT checkout (replace the
+placeholder with your checkout path):
 
 ```powershell
 $env:HOUDINI_USER_PREF_DIR = "$env:TEMP\rt-gui-014\prefs22.0"
-$env:RT_TOGGLE_ROOT = "$env:HOUDINI_RT_ROOT\extensions\rt_toggle"
-$env:RT_TOGGLE_CONFIG = "$env:HOUDINI_RT_ROOT\extensions\rt_toggle\verification\rt_toggle_sidecar.json"
+$env:RT_TOGGLE_ROOT = "<Houdini_RT checkout>\extensions\rt_toggle"
+$env:RT_TOGGLE_CONFIG = "$env:RT_TOGGLE_ROOT\verification\rt_toggle_sidecar.json"
 ```
 
 Do **not** set `HOUDINI_PACKAGE_SKIP` for this pass: the package JSON must be

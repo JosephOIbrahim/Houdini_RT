@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import importlib
+import inspect
 import json
 import os
 import signal
@@ -41,6 +43,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -211,6 +214,95 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Refuse to run unless the interpreter is this major.minor.",
     )
     return parser.parse_args(argv)
+
+
+class _NoopMessages:
+    """Minimal ``anthropic`` messages client for a startup payload probe."""
+
+    def create(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(
+            stop_reason="end_turn",
+            content=[],
+            usage=SimpleNamespace(input_tokens=0, output_tokens=0),
+            model=kwargs.get("model"),
+        )
+
+
+class _NoopClient:
+    """A client shaped like ``anthropic.Anthropic`` with no network."""
+
+    def __init__(self) -> None:
+        self.messages = _NoopMessages()
+
+
+def _resolve_entry_point(spec: str) -> Any:
+    """Import ``module.attr`` and return the callable."""
+    module_name, _, attr = str(spec).rpartition(".")
+    if not module_name or not attr:
+        raise ValueError(
+            f"entry point must be module.attr, got {spec!r}"
+        )
+    module = importlib.import_module(module_name)
+    target = getattr(module, attr)
+    if not callable(target):
+        raise TypeError(f"entry point {spec!r} is not callable")
+    return target
+
+
+def _invoke_entry_point(spec: str, context: dict[str, Any],
+                        log: Any = None) -> dict[str, Any]:
+    """Invoke a payload entry point safely.
+
+    A no-argument callable is called with no arguments. A one-argument
+    callable receives the sidecar context dict. Anything requiring more
+    arguments is reported and *not* called: the host will not invent
+    credentials, a client, or a Houdini dispatcher for a multistep agent turn.
+    """
+    log = log or (lambda message: None)
+    try:
+        target = _resolve_entry_point(spec)
+        signature = inspect.signature(target)
+        required = [
+            parameter
+            for parameter in signature.parameters.values()
+            if parameter.default is inspect.Parameter.empty
+            and parameter.kind in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        required_names = [parameter.name for parameter in required]
+        if not required:
+            result = target()
+        elif len(required) == 1:
+            result = target(context)
+        elif required_names == ["client", "dispatcher", "user_prompt"]:
+            # The named payload (synapse.cognitive.agent_loop.run_turn) needs a
+            # model client, a dispatcher and a prompt. Use a no-network client
+            # and an empty test dispatcher for the startup probe; the guarded
+            # SDK reports its own status instead of sending project content.
+            from synapse.cognitive.dispatcher import Dispatcher
+
+            prompt = str(context.get("prompt") or "sidecar payload check")
+            result = target(_NoopClient(), Dispatcher(is_testing=True), prompt)
+        else:
+            names = ", ".join(required_names)
+            log(f"entry point {spec} needs arguments ({names}); not invoked")
+            return {"status": "needs-arguments", "required": names}
+        result_status = getattr(result, "status", None)
+        log(
+            f"entry point {spec} invoked ({type(result).__name__}"
+            + (f": {result_status}" if result_status else "")
+            + ")"
+        )
+        return {
+            "status": "called",
+            "result": repr(result)[:500],
+            "result_status": None if result_status is None else str(result_status),
+        }
+    except BaseException as exc:  # noqa: BLE001 - a payload must not kill the host
+        log(f"entry point {spec} failed: {type(exc).__name__}: {exc}")
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _base_record(args: argparse.Namespace, started_mono: float) -> dict[str, Any]:
@@ -394,6 +486,24 @@ def main(argv: list[str] | None = None) -> int:
             _log(f"cannot publish ready state: {exc!r}")
             return EXIT_ERROR
         _log("state=ready")
+
+    if args.entry_point:
+        context = {
+            "instance": args.instance,
+            "pid": os.getpid(),
+            "state_dir": os.fspath(state_dir),
+            "status_path": os.fspath(status_path),
+            "runtime_home": args.runtime_home,
+            "site_packages": list(args.site_packages),
+            "python_version": record["python_version"],
+            "sys_prefix": record["sys_prefix"],
+        }
+        threading.Thread(
+            target=_invoke_entry_point,
+            args=(args.entry_point, context, _log),
+            name="rt-entry-point",
+            daemon=True,
+        ).start()
 
     last_heartbeat = time.monotonic()
 

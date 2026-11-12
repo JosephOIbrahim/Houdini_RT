@@ -239,6 +239,9 @@ def restrict_file_acl(path: str | os.PathLike[str], *, user: str | None = None) 
             stderr=subprocess.PIPE,
             timeout=10,
             check=False,
+            # icacls is a console program; without this a GUI host (Houdini)
+            # gives it a console window that flashes and vanishes.
+            creationflags=(0x08000000 if os.name == "nt" else 0),  # CREATE_NO_WINDOW
         )
     except (OSError, subprocess.SubprocessError):
         return False

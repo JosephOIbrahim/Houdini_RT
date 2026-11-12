@@ -308,6 +308,9 @@ def terminate_pid(pid: int | None, *, wait: float = TERMINATE_WAIT) -> bool:
                     stderr=subprocess.DEVNULL,
                     check=False,
                     timeout=10,
+                    # taskkill is a console program; a GUI host (Houdini) would
+                    # give it a console window that flashes and vanishes.
+                    creationflags=(0x08000000 if os.name == "nt" else 0),  # CREATE_NO_WINDOW
                 )
             except (OSError, subprocess.SubprocessError):
                 pass

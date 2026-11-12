@@ -13,6 +13,36 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-12
+
+### Added
+
+- **Turn loop** in `rt_runtime.sidecar.turn_loop`: a single-flight service over
+  the existing loopback control surface. `POST /turn` admits a turn (202) or
+  returns the terminal result inline (200 with `wait_ms`); `GET /turn/<id>`
+  polls it; `POST /cancel` requests cooperative cancellation through a
+  `threading.Event`. One turn runs at a time, a second is rejected `429` with
+  `Retry-After: 1`, results are bounded and retained, a 120 s soft deadline
+  applies, and the worker is a daemon so shutdown never waits on a hung
+  endpoint.
+- **Transport routes** in `rt_runtime.sidecar.transport`: `/turn`,
+  `/turn/<id>` and `/cancel` with a 128 KiB body cap, `TurnError` → HTTP status
+  mapping, and turn state merged into `/status` last.
+- **Host wiring** in `rt_runtime.sidecar.host_stub`: the guarded `run_turn`
+  entry is built in `--serve`, and the loop is shut down before the server
+  stops.
+
+### Changed
+
+- `README.md` and `verification/RUN.md` carry the current suite counts and the
+  turn routes.
+
+### Tests
+
+- 32 new turn-loop tests and 16 new transport route tests.
+- 207 passed / 18 skipped on CPython 3.12.10; 224 passed / 1 skipped on
+  CPython 3.14.2; release audit PASS.
+
 ## [0.1.1] - 2026-11-12
 
 ### Added

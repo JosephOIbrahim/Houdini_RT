@@ -1,7 +1,9 @@
 # RT Toggle — session hand-off (2026-11-12)
 
-Latest main: **0.1.3 in the tree, not yet released.** `v0.1.2` remains the
-published tag (`d3e2bc8`); the asset attached to it was rebuilt from `cb1ce4e`.
+Latest main: **`v0.1.5`** release, tag on `e5f2111`. Published tags: `v0.1.5`,
+`v0.1.4`, `v0.1.3`, `v0.1.2`, `v0.1.1`, `v0.1.0`. Release asset
+`dist/houdini-rt-toggle-0.1.5.zip`, 60 members, 258,545 bytes, SHA-256
+`8b4a139467a2c25e1356b91215f8c4364587dd95720facb851fa0fbcbb9a102c`.
 Repo: `%HOUDINI_RT_ROOT%\extensions\rt_toggle`
 Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
 
@@ -51,28 +53,56 @@ Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
   Offline by default; `RT_SIDECAR_LIVE_MODEL=1` runs a live turn.
 - `rt_panel.pypanel` is regenerated from `rt_panel.py`; a test fails on drift.
 
+## What v0.1.4 added
+
+- Turn control on the shelf and the node: `turn_from_shelf()` and
+  `cancel_turn_from_shelf()` in `rt_shelf.py`; **RT Turn** and **RT Turn
+  Cancel** tools in `rt_shelf.shelf`; `rt_prompt`, Run Turn, Cancel Turn and a
+  locked `rt_turn_status` on the node.
+- Submission is `wait_ms=0` everywhere. The panel polls on a Qt timer; the shelf
+  and node have no timer, so they poll for `RT_TURN_POLL_S` (default 2 s) and
+  leave the turn running after that, reachable through cancel.
+- 2 UI contract tests for the shelf tools and node parms.
+
+## What v0.1.5 added
+
+- **Icon family** in `houdini/icons/`: `rt_toggle.svg`, `rt_turn.svg`,
+  `rt_turn_cancel.svg`, one family on a 32 px grid. The shelf tools and the
+  panel tab point at them; the paths resolve through `RT_TOGGLE_ROOT`.
+- **Package fix**: `houdini/packages/rt_toggle.json` now sets `RT_TOGGLE_ROOT`
+  alongside `PYTHONPATH`, so a package install resolves the icons.
+- **`docs/ARTIST_LAUNCH.md`**: the five native surfaces an artist looks at
+  (shelf, viewer tab menu, HUD handles, radial menu, panel), the HUD recipe, and
+  the documented limits.
+- **`verification/GUI_CHECKS.md`**: renamed from `GUI_CHECKS_v0.1.4.md` because
+  it outlives one release; it now holds ten steps, the tenth being HUD handles
+  with an optional Vulkan sub-check.
+
 ## Counts
 
 ```
-local Windows   3.12: 222 passed, 18 skipped
-local Windows   3.14: 239 passed,  1 skipped
-CI Ubuntu       3.12: 223 passed, 17 skipped
-CI Ubuntu       3.13: 223 passed, 17 skipped
-CI Windows      3.14: 237 passed,  3 skipped
+local Windows   3.12: 223 passed, 18 skipped
+local Windows   3.14: 240 passed,  1 skipped
+CI Ubuntu       3.12: 224 passed, 17 skipped
+CI Ubuntu       3.13: 224 passed, 17 skipped
+CI Windows      3.14: 238 passed,  3 skipped
 ```
 
-CI run `43249796804` at `32480fa` — all four jobs success. The local/CI gap
-keeps its two causes: Ubuntu runs the POSIX permission test that Windows skips,
-and the Windows runner has no `synapse`, so the two guarded host-turn tests
-skip there. Each leg is 2 higher than at `41293e3`: the shelf-tool and
-node-parm UI contract tests, neither of them skipped away.
+CI run `43291688245` at `e5f2111` (tag) and `43291683130` (main) — all four jobs
+success in both. The local/CI gap keeps its two causes: Ubuntu runs the POSIX
+permission test that Windows skips, and the Windows runner has no `synapse`, so
+the two guarded host-turn tests skip there. Each leg is 1 higher than at
+`32480fa`: the icon contract test.
 
 ## Key paths
 
 - Adapter: `rt_runtime/adapter.py`, `rt_runtime/sidecar_adapter.py`
 - Host/supervisor/transport/turn loop:
   `rt_runtime/sidecar/{host_stub,lifecycle,transport,turn_loop}.py`
-- Tests: `tests/` (224 on 3.14, 207 + skips on 3.12 locally)
+- Tests: `tests/` (240 on 3.14, 223 + skips on 3.12 locally)
+- Icons: `houdini/icons/{rt_toggle,rt_turn,rt_turn_cancel}.svg`
+- Artist launch: `docs/ARTIST_LAUNCH.md`
+- GUI checks: `verification/GUI_CHECKS.md`
 - Release audit: `tools/audit_release.py`
 - Release build: `tools/build_release.py`
 - Live config: `%TEMP%\rt-live-rtfirst\config.json` (RT-first + entry point)
@@ -96,23 +126,26 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
 
 ## Open items
 
-1. **Prove the turn controls in Houdini.** The panel button, the two shelf
-   tools and the node parms are all unclicked in the GUI. The client, poller
-   and server are tested over loopback and the wiring is checked statically.
-   The cases to run per surface: sidecar stopped gives a clear ERROR with no
-   traceback; a running turn reaches a terminal result with the UI responsive;
-   Cancel mid-turn yields cancelled.
-2. **GUI checks.** Pane render, shelf click, parm event dispatch, gear-menu
-   duplicate, uninstall (Install Check 6) are still manual.
-3. **3.13 in-process sibling runtime.** Planned, not installed; the ABI refusal
+1. **Run the ten GUI steps.** `verification/GUI_CHECKS.md` is the single list:
+   panel draw and guard, sidecar ON, offline turn with a responsive UI, cancel,
+   the two shelf tools, the node parms, and HUD handles. None has been clicked
+   in Houdini. The client, poller and server are tested over loopback and the
+   wiring is checked statically; the clicks are the gap.
+2. **Icon rendering and Vulkan.** The icon strings expand to real files; how
+   they draw at shelf size and in the pane tab is unverified. HUD handles over
+   the Vulkan viewport are undocumented in the reference corpus and must be
+   recorded as NOT RUN until tested.
+3. **Other GUI checks.** Pane render, parm event dispatch, gear-menu duplicate,
+   uninstall (Install Check 6).
+4. **3.13 in-process sibling runtime.** Planned, not installed; the ABI refusal
    remains the only in-process behaviour.
-4. **Live-turn housekeeping.** Spend/credit monitoring, and keeping the
+5. **Live-turn housekeeping.** Spend/credit monitoring, and keeping the
    per-state `model_access.json` in sync with whichever endpoint is in use. The
    default local proxy is `http://127.0.0.1:11434/v1/messages`; the real
    endpoint is `https://api.anthropic.com/v1/messages`.
-5. **Release.** `v0.1.2` is the published release (turn loop); `v0.1.1` and
-   `v0.1.0` remain prior tags. `0.1.3` is in the tree awaiting its release.
-6. **Licensing.** TBD; no license file is included.
+6. **Release.** `v0.1.5` is the published release; `v0.1.0`–`v0.1.4` remain
+   prior tags.
+7. **Licensing.** TBD; no license file is included.
 
 ## Cautions
 

@@ -158,6 +158,9 @@ class RuntimeTarget:
     env: dict[str, str] = field(default_factory=dict)
     # Opt-in only: a mismatched interpreter is refused unless this is true.
     allow_pure_python_only: bool = False
+    # "in_process" (default) keeps today's path; "sidecar" drives S1/S2.
+    mode: str = "in_process"
+    sidecar: Any = None
 
     def __post_init__(self) -> None:
         # Coerce plain strings so RuntimeTarget works from JSON and from code.
@@ -169,6 +172,13 @@ class RuntimeTarget:
             object.__setattr__(self, "entry_point", str(self.entry_point))
         object.__setattr__(self, "env", {str(k): str(v) for k, v in dict(self.env or {}).items()})
         object.__setattr__(self, "allow_pure_python_only", bool(self.allow_pure_python_only))
+        mode = str(self.mode or "in_process").strip().lower()
+        if mode not in ("in_process", "sidecar"):
+            raise ValueError(
+                f"runtime target {self.name!r}: mode must be 'in_process' or "
+                f"'sidecar', got {self.mode!r}"
+            )
+        object.__setattr__(self, "mode", mode)
 
 
 _TARGET_FIELDS = {
@@ -179,6 +189,8 @@ _TARGET_FIELDS = {
     "entry_point",
     "env",
     "allow_pure_python_only",
+    "mode",
+    "sidecar",
 }
 _REQUIRED_FIELDS = ("name", "home", "python_version", "site_packages")
 
@@ -257,14 +269,30 @@ def _target_from_mapping(raw: Any, base: Path) -> RuntimeTarget:
             f"runtime target {raw['name']!r}: 'allow_pure_python_only' must be true or false"
         )
 
+    from .sidecar_adapter import settings_for_target, target_mode
+
+    mode = target_mode(raw)
+    home = _coerce_path(raw["home"], base)
+    site_packages = _coerce_path(raw["site_packages"], base)
+    sidecar = None
+    if mode == "sidecar":
+        sidecar = settings_for_target(
+            raw,
+            base,
+            target_home=home,
+            target_site_packages=site_packages,
+        )
+
     return RuntimeTarget(
         name=raw["name"],
-        home=_coerce_path(raw["home"], base),
+        home=home,
         python_version=raw["python_version"],
-        site_packages=_coerce_path(raw["site_packages"], base),
+        site_packages=site_packages,
         entry_point=raw.get("entry_point"),
         env=env_raw,
         allow_pure_python_only=allow_pure,
+        mode=mode,
+        sidecar=sidecar,
     )
 
 
@@ -547,6 +575,20 @@ class RuntimeAdapter:
             None if state_path is None else Path(state_path).expanduser().resolve()
         )
         self._memory_state: dict[str, Any] = _empty_state(target.name)
+        self._sidecar = None
+        if target.mode == "sidecar":
+            if target.sidecar is None:
+                raise ValueError(
+                    f"runtime target {target.name!r}: mode 'sidecar' needs a sidecar section"
+                )
+            from .sidecar_adapter import SidecarAdapter
+
+            self._sidecar = SidecarAdapter(
+                target.name,
+                target.sidecar,
+                target_home=target.home,
+                target_site_packages=target.site_packages,
+            )
 
     # -- state file ---------------------------------------------------------
 
@@ -642,6 +684,8 @@ class RuntimeAdapter:
 
     def status(self) -> RuntimeState:
         """Current state: OFF, ON, or ERROR (state file says on but sys.path disagrees)."""
+        if self.target.mode == "sidecar":
+            return self._sidecar.status()
         state = self._read_state()
         if not state.get("active"):
             return RuntimeState.OFF
@@ -669,6 +713,8 @@ class RuntimeAdapter:
 
     def probe(self) -> dict[str, Any]:
         """Read-only diagnostics. Never mutates sys.path, env, or the state file."""
+        if self.target.mode == "sidecar":
+            return self._sidecar.probe()
         try:
             compatibility = self.check_compatibility()
             home_exists = _is_dir(self.target.home)
@@ -701,6 +747,8 @@ class RuntimeAdapter:
 
     def activate(self) -> ActivationResult:
         """Turn the runtime on. Idempotent; refuses when unsafe or unavailable."""
+        if self.target.mode == "sidecar":
+            return self._sidecar.activate()
         with _GLOBAL_LOCK:
             state = self._read_state()
             recorded_target = str(state.get("target") or "")
@@ -827,6 +875,8 @@ class RuntimeAdapter:
 
     def deactivate(self) -> ActivationResult:
         """Turn the runtime off. Idempotent; removes only paths this adapter added."""
+        if self.target.mode == "sidecar":
+            return self._sidecar.deactivate()
         with _GLOBAL_LOCK:
             state = self._read_state()
             was_active = bool(state.get("active"))
@@ -906,6 +956,8 @@ class RuntimeAdapter:
 
     def toggle(self) -> ActivationResult:
         """Switch the runtime: on -> off, off / error -> on."""
+        if self.target.mode == "sidecar":
+            return self._sidecar.toggle()
         with _GLOBAL_LOCK:
             if self.status() == RuntimeState.ON:
                 return self.deactivate()

@@ -1,101 +1,125 @@
-# RT Toggle — HoudiniRT runtime on/off for Houdini 22.0.429
+<p align="center">
+  <img src="docs/rt-toggle-mark.svg" alt="RT Toggle" width="360">
+</p>
 
-**What it is.** A small Houdini extension that turns the HoudiniRT Python runtime
-on or off inside a running Houdini session. "On" means the runtime's
-`site-packages` directory is appended to the current process's `sys.path` and the
-target's environment variables are applied; "off" removes exactly the entries the
-toggle added and restores the environment to its prior values.
+# RT Toggle
 
-The switch is honest about what it cannot do. Houdini 22.0.429 embeds Python
-3.13.10 while HoudiniRT is a Python 3.14 distribution, so the full HoudiniRT
-`site-packages` (104 `cp314` compiled modules) is refused by an ABI guard rather
-than loaded. A refusal is a normal, tested outcome, not a crash.
+**Houdini 22 runtime on/off for HoudiniRT — v0.1.1**
 
-**Status: scaffold.** The pure-Python core is covered by 74 local tests. Nothing
-in this tree has been executed inside Houdini yet — see
-[Proven vs untested](#proven-vs-untested).
+## The answer first
 
----
+**Houdini 22.0.429 runs Python 3.13.10. HoudiniRT is a Python 3.14 distribution.**
 
-## Surfaces
+The toggle does **not** load the 3.14 tree into Houdini's interpreter. It guards
+it, refuses it, and runs it as a supervised sidecar instead.
 
-There are three supported ways to reach the toggle, and one surface that is
-explicitly not available.
+**What works today:** sidecar ON is proven live — `/health` returns 200 and a
+real `run_turn` returns complete. The in-process guard correctly refuses the
+cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
 
-| Surface | Role | File | Shows live state |
-|---|---|---|---|
-| Python Panel | **Primary** | `houdini/rt_panel.pypanel` | Yes — full probe: target, Python version, ABI verdict, blockers, last error |
-| Shelf tool | **Secondary** | `houdini/rt_shelf.shelf` (+ `rt_shelf.py`) | No — one status line and a status-bar message per click |
-| Node | Optional, scene-scoped | `houdini/rt_node.py` | Last press only, in a string parm |
-| Viewport camera dropdown | **Not an extension point** | — | — |
-
-The camera dropdown in the top-right corner of a viewport is a closed, built-in
-menu in 22.0.429. `docs/CLAIMS_VS_REFERENCE.md` and `DESIGN.md` §2.1 record the
-evidence: no documented insertion API exists, only descriptions of the menu and
-triggers for entries already in it. Do not build against it.
-
-All three supported surfaces call the same process-wide adapter
-(`rt_runtime.session.get_adapter()`), so they share one lock, one state file, and
-one set of path bookkeeping. They cannot disagree about what was added to
-`sys.path`.
+**Tests:** 176 pass on Python 3.14; 159 pass with skips on 3.12.
 
 ---
 
-## Quick start (Houdini 22.0.429)
+## What works today
 
-Five files, four destinations. Full step-by-step detail, including the exact
-`hou` calls and uninstall steps, is in **[INSTALL.md](INSTALL.md)**.
+- **Sidecar mode.** `activate()` starts a CPython 3.14 process with runtime-first
+  packages, waits for ready, checks `/health`, and reports ON. `deactivate()`
+  stops it gracefully.
+- **In-process guard.** Any attempt to load the full 3.14 `site-packages` under
+  Houdini's 3.13 interpreter is refused with the ABI blocker named. Refusal is a
+  designed outcome, not a crash.
+- **Three surfaces.** A Python Panel (primary), a shelf tool (secondary), and an
+  optional node. The viewport camera dropdown is not an extension point.
+- **One adapter.** Every surface calls the same process-wide adapter, so they
+  share one lock, one state file and one set of path bookkeeping.
 
-`%PREF%` below means the folder printed by `hou.homeHoudiniDirectory()`
-(typically `%USERPROFILE%\Documents\houdini22.0`). `%HOUDINI_RT_ROOT%` is the
-documentation spelling of the `HOUDINI_RT_ROOT` environment variable: the
-HoudiniRT distribution root — the folder that contains `Lib\`, `Scripts\`, and
-`extensions\`. `%USERPROFILE%` is your Windows profile folder. Substitute real
-paths when you type them into Houdini.
+---
 
-**Step 1 of 5 — Make the extension importable.** Set `HOUDINI_RT_ROOT` to the
-HoudiniRT distribution root in `%PREF%\houdini.env`, then copy
-`houdini/packages/rt_toggle.json` to `%PREF%\packages\rt_toggle.json`. The
-package appends `$HOUDINI_RT_ROOT/extensions/rt_toggle` to `PYTHONPATH` at
-startup; it does not touch HoudiniRT `site-packages`. Package files are read at
-startup only, so restart afterwards.
+## Install in 5 steps
 
-**Step 2 of 5 — Install the panel.** Copy `houdini/rt_panel.pypanel` to
-`%PREF%\python_panels\rt_panel.pypanel`. The internal interface name `RT_Toggle`
-is fixed and must not be renamed.
+Full detail, exact `hou` calls and uninstall are in **[INSTALL.md](INSTALL.md)**.
 
-**Step 3 of 5 — Install the shelf.** Copy `houdini/rt_shelf.shelf` and
-`houdini/rt_shelf.py` together into `%PREF%\toolbar\`. The `.shelf` bootstrap
-looks for `rt_shelf.py` in the same folder, so they must travel as a pair, and
-because `rt_runtime` is not in the preference folder, set `RT_TOGGLE_ROOT` to the
-extension root. Without the copies, add
-`%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini` to
-`HOUDINI_TOOLBAR_PATH` in `%PREF%\houdini.env` instead; that needs no extra
-variable.
+`%PREF%` = `hou.homeHoudiniDirectory()` (usually
+`%USERPROFILE%\Documents\houdini22.0`). `%HOUDINI_RT_ROOT%` = the HoudiniRT
+distribution root.
 
-**Step 4 of 5 — Add the pane menu entry.** Copy `houdini/PaneTabTypeMenu.xml` to
-`%PREF%\PaneTabTypeMenu.xml`. This is a supplement, not a replacement for the
-factory file; if a file with that name already exists from another tool, merge
-the single `<actionItem>` block instead of overwriting it.
+1. **Make it importable.** Set `HOUDINI_RT_ROOT` in `%PREF%\houdini.env`; copy
+   `houdini/packages/rt_toggle.json` to `%PREF%\packages\`. Restart.
+2. **Install the panel.** Copy `houdini/rt_panel.pypanel` to
+   `%PREF%\python_panels\`. Keep the interface name `RT_Toggle`.
+3. **Install the shelf.** Copy `rt_shelf.shelf` and `rt_shelf.py` together to
+   `%PREF%\toolbar\`; set `RT_TOGGLE_ROOT` if the pair is copied out of the
+   extension.
+4. **Add the pane menu entry.** Copy `houdini/PaneTabTypeMenu.xml` to `%PREF%\`.
+   It is a supplement; merge the single `<actionItem>` if one already exists.
+5. **Open it.** Restart, choose **New Pane Tab Type → RT Toggle**, or click the
+   **RT Toggle** shelf button.
 
-**Step 5 of 5 — Open it.** Restart Houdini, open the pane tab type menu, and
-choose **RT Toggle**. The panel draws the current state and a toggle button. The
-shelf tool **RT Toggle** does the same switch in one click.
+**Never** put `%HOUDINI_RT_ROOT%\Lib\site-packages` on `PYTHONPATH`, in a package
+JSON, in `houdini.env`, or in a startup script. The guard exists to keep it out.
 
-You can skip the restart for the panel alone by running
-`hou.pypanel.installFile(...)` in the Houdini Python Shell; the shelf and the
-pane menu entry are startup-loaded. See `INSTALL.md` Step 5.
+---
 
-**Do not** put `%HOUDINI_RT_ROOT%\Lib\site-packages` on `PYTHONPATH`, in a
-package JSON, in `houdini.env`, or in a startup script. The ABI guard exists
-precisely to keep that directory out of Houdini's interpreter.
+## How it works
+
+```mermaid
+flowchart LR
+  subgraph Surfaces
+    P[Python Panel]
+    S[Shelf tool]
+    N[Node]
+  end
+
+  A[Adapter<br/>one lock · one state file]
+  G{Compatibility guard}
+  I[In-process<br/>matching interpreter]
+  D[Sidecar<br/>Python 3.14 process]
+  H[/health · status.json/]
+  R[REFUSED<br/>not a crash]
+
+  P --> A
+  S --> A
+  N --> A
+  A --> G
+  G -- safe --> I
+  G -- cp314 under 3.13 --> R
+  A -- mode: sidecar --> D
+  D --> H
+```
+
+**Boundaries.** Surfaces never touch `sys.path`. The adapter owns state. The
+guard makes the one safety decision. The sidecar is a separate process, not a
+second interpreter inside Houdini.
+
+## Activation
+
+```mermaid
+sequenceDiagram
+  participant H as Houdini (3.13)
+  participant A as rt_runtime
+  participant S as Sidecar (3.14)
+  participant API as /health
+
+  H->>A: activate()
+  A->>A: preflight + ABI guard
+  alt in-process, cp314 under 3.13
+    A-->>H: REFUSED · OFF · changed=false
+  else sidecar mode, runtime-first
+    A->>S: start supervisor
+    S-->>A: status.json = ready
+    A->>API: GET /health
+    API-->>A: 200 · ok · pid · python 3.14
+    A-->>H: ON
+  end
+```
 
 ---
 
 ## Runtime configuration
 
-`rt_toggle.json` at the extension root names the runtime target. Paths in it are
-relative to that file's folder:
+`rt_toggle.json` at the extension root names the target. Relative paths resolve
+against that file's folder.
 
 ```json
 {
@@ -106,93 +130,85 @@ relative to that file's folder:
       "home": "../..",
       "python_version": "3.14",
       "site_packages": "../../Lib/site-packages",
-      "entry_point": null,
-      "env": {},
       "allow_pure_python_only": false
     }
   }
 }
 ```
 
-`../..` resolves to the HoudiniRT distribution root and `../../Lib/site-packages`
-to its package tree, so the file works wherever the checkout lives. Accepted
-target keys are `name`, `home`, `python_version`, `site_packages`, `entry_point`,
-`env`, and `allow_pure_python_only`. Relative values resolve against the config
-file's folder; absolute values still work.
+Add `"mode": "sidecar"` plus a `sidecar` block to run the 3.14 process instead of
+touching `sys.path`. The block carries the launcher, host script, state folder,
+package precedence, timeouts and `entry_point`. See `DESIGN.md` for the full
+field table.
+
+**Package precedence.** `runtime-first` is the default and wins imports. Base-first
+is available only with `"allow_degraded_base_first": true`, and every result is
+labelled `DEGRADED`.
 
 ---
 
 ## ABI policy
 
-The compatibility guard (`rt_runtime/compat.py`) compares the host interpreter's
-ABI against the target's declared `python_version` and scans the target for
-ABI-specific binaries. It reads filenames only; it never imports what it
-inspects.
+`rt_runtime/compat.py` compares the host ABI with the target's declared Python and
+scans filenames for ABI-specific binaries. It never imports what it inspects.
 
-**Strict by default.** A target whose declared Python version differs from the
-host is refused, even when the target contains no compiled extensions. Under
-Houdini's `cp313` host, the default `houdini_rt` target — Python 3.14 with 104
-`cp314` `.pyd` files — is refused with an ABI-mismatch blocker. That refusal is
-the designed, correct result.
+**Strict by default.** A target whose declared version differs from the host is
+refused, even with no compiled files. Under Houdini's `cp313`, the default 3.14
+target is refused with the mismatch named.
 
-**Opt-in per target.** Setting `"allow_pure_python_only": true` on a target
-permits activation when the host version differs *and* the scan finds no
-compiled binaries, and the report carries a warning that 3.14-only syntax or
-standard-library APIs may still fail at import or call time. The flag is
-per-target; one config can carry a strict production target and a permissive
-scratch target.
+**Opt-in per target.** `"allow_pure_python_only": true` permits a mismatch only
+when the scan finds no compiled modules, with a warning that 3.14-only syntax or
+stdlib APIs may still fail.
 
-Activation never imports `entry_point`, never changes the interpreter, and never
-unloads modules on deactivate. What "on" means in full is in `DESIGN.md` §5.
+---
+
+## Sidecar: what ON means
+
+- A supervised CPython 3.14 process, started with the runtime tree in front.
+- A lock, a heartbeat and an atomically written `status.json`.
+- A loopback HTTP control surface with a per-launch token: `/health`, `/status`,
+  `/shutdown`.
+- `entry_point` reaches the host as `--entry-point`. The host invokes a no-arg
+  target, a one-context target, or the `run_turn` shape with a guarded client and
+  dispatcher.
+- The default probe is offline. `RT_SIDECAR_LIVE_MODEL=1` uses the configured
+  Anthropic endpoint and returns a real `AgentTurnResult`.
 
 ---
 
 ## Tests
 
-From the extension root:
-
 ```powershell
-py -3.12 -m pytest tests -q
+py -3.12 -m pytest tests -q -p no:cacheprovider
 ```
 
-Expected: **74 passed**. The suite runs on a normal CPython 3.12 and needs no
-Houdini, no GUI, and no hython. `tests/fake_hou.py` supplies a pure-Python stand-in
-for `hou` where a UI surface is exercised.
+- **Python 3.12:** 159 passed, 18 skipped (3.14-only sidecar lifecycle tests skip).
+- **Python 3.14:** 176 passed, 1 skipped.
 
-Do not run the suite under the 3.14 interpreter on this workstation; use
-3.12. Details and per-claim commands are in `verification/RUN.md`.
+The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`. CI runs
+3.12/3.13 on Ubuntu and the full suite on 3.14 on Windows.
 
 ---
 
 ## Proven vs untested
 
-**Proven locally (CPython 3.12.10, outside Houdini):**
+**Proven live in hython 22.0.429:**
 
-- 74 pytest tests pass: adapter state machine, idempotency, exact `sys.path`
-  restoration, env apply/restore, state-file schema and persistence, ABI guard
-  decisions including the cp314 refusal and the opt-in allowance, and the XML /
-  script contracts of the `.pypanel` and `.shelf`.
-- `load_targets()` resolves the relative config to the expected home and
-  `site-packages` paths.
-- The guard refuses the full 3.14 `site-packages` when told the host is 3.13.
+- The panel installs; `interfaceByName("RT_Toggle")` resolves.
+- The cp314 target is refused: `safe=false`, 104 blockers, no cp314 import.
+- The shelf XSD validates; the tool script reports one refusal line.
+- The node builds and its callback function writes REFUSED and reverts.
+- The state file survives restart, reports ERROR, re-activates, and deactivates.
+- The pane-menu supplement has one item at the right anchor.
+- RT-first sidecar: ON, `/health` 200, `run_turn` complete, graceful OFF.
 
-**Untested (requires a Houdini run, which this scaffold has not done):**
+**Manual, not machine-verified:**
 
-- That the `.pypanel` installs and renders under Houdini's PySide6.
-- That `hou.pypanel.installFile` accepts the file as written.
-- That the pane menu supplement merges into the factory menu at the intended
-  position.
-- That the shelf loads from `HOUDINI_TOOLBAR_PATH` and its bootstrap resolves
-  `rt_shelf.py`.
-- That `rt_node.build()` creates the node and that the parm callback fires, and
-  whether a programmatic `Parm.set()` re-enters that callback.
-- The guard's exact refusal text inside Houdini's own 3.13 interpreter, and the
-  precise symptom of importing a `cp314` `.pyd` under 3.13.
-- Whether interface names are matched case-sensitively.
+- Pane render, shelf click, parm event dispatch, gear-menu duplicate and uninstall.
+- The planned 3.13 in-process sibling runtime (G8) — no tree has been installed.
+- A network model turn without credentials; the offline probe is the default.
 
-`verification/MATRIX.md` keeps every Houdini-side row at `not_run` or `proposed`.
-`verification/INSTALL_CHECKS.md` holds the six manual checks that would promote
-them.
+`verification/MATRIX.md` and `INSTALL_CHECKS.md` keep the per-check status.
 
 ---
 
@@ -200,32 +216,22 @@ them.
 
 ```
 rt_toggle/
-├─ README.md                     this file
-├─ INSTALL.md                    step-by-step Houdini install and uninstall
-├─ DESIGN.md                     design record, state machine, ABI policy
-├─ rt_toggle.json                runtime target config (relative paths)
-├─ rt_runtime/                   pure-Python core; never imports hou
-│  ├─ adapter.py                 RuntimeTarget, RuntimeAdapter, state file
-│  ├─ compat.py                  ABI / compatibility guard
-│  └─ session.py                 get_adapter() singleton
-├─ houdini/
-│  ├─ rt_panel.pypanel           Python Panel (self-contained)
-│  ├─ rt_panel.py                readable copy of the panel script
-│  ├─ rt_shelf.shelf             shelf set + tool bootstrap
-│  ├─ rt_shelf.py                shelf helper module
-│  ├─ rt_node.py                 optional node builder
-│  ├─ RT_TOGGLE_NODE.md          node recipe and limitations
-│  ├─ PaneTabTypeMenu.xml        pane tab type menu supplement
-│  └─ packages/rt_toggle.json    startup PYTHONPATH package
-├─ docs/CLAIMS_VS_REFERENCE.md   what the local docs corpus does and does not say
-├─ tests/                        pytest suite (74 tests)
-└─ verification/                 install checks, claim matrix, run book
+├─ README.md
+├─ INSTALL.md · DESIGN.md · CHANGELOG.md
+├─ rt_toggle.json
+├─ rt_runtime/
+│  ├─ adapter.py · compat.py · session.py
+│  ├─ sidecar_adapter.py
+│  └─ sidecar/                host, supervisor, loopback transport
+├─ houdini/                   panel, shelf, node, pane menu, package
+├─ docs/
+│  ├─ CLAIMS_VS_REFERENCE.md
+│  └─ rt-toggle-mark.svg
+├─ tests/
+└─ verification/
 ```
 
-The state file `.rt_toggle_state.json` is written at the extension root beside
-`rt_toggle.json`. It is generated at runtime and is not tracked.
-
----
+The state file `.rt_toggle_state.json` is generated at runtime and is not tracked.
 
 ## License
 

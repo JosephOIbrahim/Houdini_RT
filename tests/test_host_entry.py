@@ -97,6 +97,7 @@ def test_other_multi_argument_entry_point_is_reported_not_called(tmp_path, monke
 
 
 def test_run_turn_shaped_entry_point_is_invoked_with_doubles(tmp_path, monkeypatch):
+    pytest.importorskip("synapse")
     sentinel = tmp_path / "called.txt"
     (tmp_path / "entry_turn.py").write_text(
         "from types import SimpleNamespace\n"
@@ -120,6 +121,7 @@ def test_run_turn_shaped_entry_point_is_invoked_with_doubles(tmp_path, monkeypat
 
 
 def test_guarded_run_turn_returns_complete(tmp_path):
+    pytest.importorskip("synapse")
     result = host_stub._invoke_entry_point(
         "synapse.cognitive.agent_loop.run_turn",
         {"state_dir": str(tmp_path), "prompt": "ping"},

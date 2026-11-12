@@ -58,35 +58,30 @@ A missing release zip is reported as `zip not built` and is not a failure.
 | 16 | Zip contains no cache, compiled, or state entries. | audit check | `locally_tested` | PASS | 0 forbidden entries. |
 | 17 | Zip contains every required release file. | audit check | `locally_tested` | PASS | All 11 required files present, including `README.md`. |
 | 18 | Zip SHA-256 is recorded by the builder. | `tools/build_release.py` output | `locally_tested` | PASS | The value changes whenever any shipped file changes; use the hash printed by the final build, not a hash copied into this file. |
-| 19 | Git commit created. | `git add` / `git commit` | `not_run` | not run | Release owner. |
-| 20 | Push to the private `houdini-rt-toggle` repository. | `git push` | `not_run` | not run | Release owner. |
-| 21 | Annotated tag `v0.1.0` created. | `git tag -a v0.1.0` | `not_run` | not run | Release owner. |
-| 22 | GitHub release published for `v0.1.0`. | `gh release create` | `not_run` | not run | Release owner. |
-| 23 | Extension installs and runs inside Houdini 22.0.429. | manual | `not_run` | not run | Tracked in `verification/MATRIX.md` and `verification/INSTALL_CHECKS.md`. |
+| 19 | Git commit created. | `git add` / `git commit` | `locally_tested` | PASS | `2a42e6c` release commit; `80b554d` results commit. |
+| 20 | Push to the private `houdini-rt-toggle` repository. | `git push` | `locally_tested` | PASS | `main` at `80b554d`; `main...origin/main`. |
+| 21 | Annotated tag `v0.1.0` created. | `git tag -a v0.1.0` | `locally_tested` | PASS | Tag pushed to origin. |
+| 22 | GitHub release published for `v0.1.0`. | `gh release create` | `locally_tested` | PASS | https://github.com/JosephOIbrahim/houdini-rt-toggle/releases/tag/v0.1.0 ; asset digest `sha256:e650e05c…7202a8` matched the local zip. |
+| 23 | Extension installs and runs inside Houdini 22.0.429. | hython 22.0.429, 2026-11-11; GUI steps marked | `locally_tested` | PARTIAL | Checks A, B, C and E pass in hython; D's build and callback function pass. The pane render, shelf click and parm event dispatch are GUI-ONLY. Details in `verification/RUN.md`. |
+| 24 | Check A: `.pypanel` installs and `interfaceByName("RT_Toggle")` resolves. | hython 22.0.429 | `locally_tested` | PASS | `installFile` ok; interface returned. Render GUI-ONLY. |
+| 25 | Check B: the default cp314 target is refused; no cp314 module imported. | hython 22.0.429 | `locally_tested` | PASS | `safe=False`; 104 blockers; `activate()` `False/off/False`; `cp314_modules: []`. Button press GUI-ONLY. |
+| 26 | Check C: shelf XSD valid; shelf and tool register; tool script reports refusal. | hython 22.0.429 | `locally_tested` | PASS | XSD `True`, 0 errors; `RT` + `rt_toggle`; one `HoudiniRT: OFF - refused: ...` line. GUI click GUI-ONLY. |
+| 27 | Check D: node builds; callback function writes REFUSED and reverts `enable`. | hython 22.0.429 | `locally_tested` | PASS | `/obj/RT_TOGGLE`; direct call wrote `REFUSED`, `enable` 1→0. Event dispatch GUI-ONLY: hython does not dispatch parm callbacks. |
+| 28 | Check E: state keys, restart ERROR, toggle ON, deactivate OFF. | hython 22.0.429 | `locally_tested` | PASS | Five keys, ISO timestamp; fresh process `error`; toggle `on`; deactivate `off`, `added_paths: []`. |
+| 29 | Check F: one PaneTabTypeMenu entry after `log_viewer`; interface installed. | hython 22.0.429 | `locally_tested` | PASS | One `pythonpanel::RT_Toggle`, anchor `pythonpanel::log_viewer`; menu render and gear menu GUI-ONLY; uninstall NOT RUN. |
 
 ## Audit policy note (read before signing off)
 
-The audit's tree-cache check was changed during this task from FAIL to WARN by
-another contributor. The rationale recorded in the script is that these
-directories are git-ignored and excluded from the release zip, so they cannot
-reach the published artifact.
+The tree-cache policy was settled on **2026-11-11**: working-tree caches are a
+`WARN` because they are git-ignored and excluded from the release zip, so they
+cannot reach the published artifact. Cache entries inside the zip remain a hard
+`FAIL`. `verification/RELEASE_CHECKS.md` P7 was aligned with this policy.
 
-That rationale holds for the artifact, but the release brief this audit was
-built from lists working-tree caches as a **failure**. The current behaviour
-is therefore a policy divergence, not a bug:
-
-- Tree caches: `WARN` (current), brief required `FAIL`.
-- Zip cache entries: `FAIL` (unchanged, still strict).
+- Tree caches: `WARN` (decided).
+- Zip cache entries: `FAIL` (strict).
 - `.github/workflows/tests.yml` is excluded from the text scan because it is
   itself a scanner definition. A real secret or path placed in that file
   would not be caught.
-
-The release owner should decide which behaviour is wanted. Restoring FAIL is
-a one-line change in `check_forbidden_tree`.
-
-`verification/RELEASE_CHECKS.md` (row P7) still states that the audit fails
-while cache directories exist. That is now inaccurate and should be aligned
-with whichever policy is chosen.
 
 ## Resolved during this task
 
@@ -99,12 +94,14 @@ gone from the working tree now:
 | `houdini/packages/rt_toggle.json` | `PYTHONPATH` now uses `$HOUDINI_RT_ROOT/extensions/rt_toggle`. |
 | `verification/RELEASE_CHECKS.md` | Path example replaced. |
 
-## Blocking list before commit
+## Release state
 
-The automated gate is green at the last run. Two items remain:
+The release is published and this documentation update is on `main`. The
+automated gate is green; the git/push/tag/release rows above are complete.
 
-1. Decide the tree-cache policy above. If the brief's `FAIL` behaviour is
-   required, restore it in `check_forbidden_tree` (or remove the ignored
-   cache directories), and align `verification/RELEASE_CHECKS.md` P7.
-2. Perform the git/push/tag/release steps. Nothing in this file has tested
-   them.
+Remaining manual items:
+
+1. GUI checks: pane render, shelf click, parm event dispatch, and the
+   gear-menu duplicate question.
+2. Uninstall (`verification/INSTALL_CHECKS.md` Check 6), which is still
+   `NOT RUN`.

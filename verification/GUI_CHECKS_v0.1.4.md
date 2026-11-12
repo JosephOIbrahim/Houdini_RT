@@ -6,7 +6,7 @@ sidecar ON with `/health` 200). 22.0.466 and 22.0.492 are a second stop after
 this list passes. 22.0.400 is untested; 21.0.773 is a different major line and
 out of scope.
 
-These nine steps cover what no automated test can: the click, the dispatch and
+These ten steps cover what no automated test can: the click, the dispatch and
 the visible result. The client, poller, shelf XML and parm templates are all
 already tested or validated mechanically; nothing here repeats that.
 
@@ -27,6 +27,7 @@ a pass.
 | 7 | Cancel reaches `cancelled` | | |
 | 8 | Shelf tools register, submit and cancel | | |
 | 9 | Node parms build, Run Turn and Cancel Turn work | | |
+| 10 | HUD handles appear over the viewport (and Vulkan, if enabled) | | |
 
 ## Setup
 
@@ -161,6 +162,28 @@ Then, in the parameter pane:
 This is the path hython cannot exercise at all — parm callbacks do not fire
 there — so a failure here is the most likely real bug of the nine.
 
+## HUD handles — viewport controls
+
+### Step 10 — HUD handles appear over the viewport
+
+HUD handles are the native way to put controls over the view. The recipe is in
+`docs/ARTIST_LAUNCH.md`; the short form:
+
+1. Select the RT_TOGGLE node so its parameters show.
+2. Drag `enable` into the viewport; expect a checkbox handle.
+3. Drag `rt_run_turn` and `rt_cancel_turn`; expect two button handles.
+4. Right-click each and turn on **Persistent**, then **Lock Placement**.
+
+**Pass when:** the three handles draw over the view, stay visible when another
+node is selected (persistent), the Run Turn button submits, and the Cancel
+button reaches `CANCELLING`. A handle that draws but does nothing is a FAIL —
+record which one.
+
+**Vulkan sub-check, optional:** if this session runs the Vulkan viewport, repeat
+the same look-and-press and record whether the handles draw there. The reference
+corpus does not document HUD behaviour under Vulkan, so **NOT RUN** is the
+correct verdict when Vulkan is not in use.
+
 ## Recording rules
 
 - One verdict per step, plus the visible text or a screenshot name.
@@ -174,9 +197,10 @@ there — so a failure here is the most likely real bug of the nine.
 
 ## After this list
 
-- PASS on all nine converts the "Not proven" section of
+- PASS on all ten converts the "Not proven" section of
   `RELEASE_NOTES_v0.1.4.md` into evidence; carry the table into the next
   release notes.
-- Then, and only then, repeat steps 3, 8 and 9 in 22.0.466 and 22.0.492. The
-  shelf schema and parm templates are the parts most likely to drift; the
-  sidecar side is a separate 3.14 process and does not change per build.
+- Then, and only then, repeat steps 3, 8, 9 and 10 in 22.0.466 and 22.0.492.
+  The shelf schema, parm templates and HUD rendering are the parts most likely
+  to drift; the sidecar side is a separate 3.14 process and does not change per
+  build.

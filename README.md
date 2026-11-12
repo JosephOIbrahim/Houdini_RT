@@ -68,8 +68,13 @@ distribution root.
 **Never** put `%HOUDINI_RT_ROOT%\Lib\site-packages` on `PYTHONPATH`, in a package
 JSON, in `houdini.env`, or in a startup script. The guard exists to keep it out.
 
-The icons resolve through `RT_TOGGLE_ROOT`. When the shelf pair is copied into
-`%PREF%\toolbar\`, set that variable too, or the tools fall back to no icon.
+The icons resolve through `RT_TOGGLE_ROOT`, which the package JSON now sets.
+When the shelf pair is copied into `%PREF%\toolbar\` instead, set that variable
+too, or the tools fall back to no icon.
+
+For putting the controls over the viewport itself, see
+**[docs/ARTIST_LAUNCH.md](docs/ARTIST_LAUNCH.md)** — HUD handles are the native
+mechanism, and the recipe is there.
 
 ---
 

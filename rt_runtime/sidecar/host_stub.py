@@ -215,6 +215,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _read_env_value(path: str | os.PathLike[str], name: str) -> str | None:
+    """Read one NAME=value line from a local .env file. Never logs it."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(name + "="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
+
+
 def _resolve_entry_point(spec: str) -> Any:
     """Import ``module.attr`` and return the callable."""
     module_name, _, attr = str(spec).rpartition(".")
@@ -271,6 +284,10 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
                 os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com"
             ).rstrip("/")
             endpoint = base + "/v1/messages"
+            live = os.environ.get("RT_SIDECAR_LIVE_MODEL", "").strip().lower() in (
+                "1", "true", "yes", "on"
+            )
+            log(f"entry point probe mode: {'live' if live else 'offline'}")
             state_dir = Path(str(context.get("state_dir") or "."))
             policy_path = state_dir / "model_access.json"
             policy_path.write_text(
@@ -293,45 +310,76 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
             )
             os.environ["SYNAPSE_MODEL_POLICY"] = os.fspath(policy_path)
 
-            http = model_access.sdk_http_module()
-
-            def _probe_response(request: Any) -> Any:  # noqa: ARG001
-                return http.Response(
-                    200,
-                    json={
-                        "id": "msg_sidecar_probe",
-                        "type": "message",
-                        "role": "assistant",
-                        "model": model,
-                        "content": [
-                            {"type": "text", "text": "sidecar payload check ok"}
-                        ],
-                        "stop_reason": "end_turn",
-                        "stop_sequence": None,
-                        "usage": {"input_tokens": 1, "output_tokens": 1},
-                    },
+            if live:
+                api_key = os.environ.get("ANTHROPIC_API_KEY") or _read_env_value(
+                    os.environ.get("RT_SIDECAR_ANTHROPIC_ENV_FILE")
+                    or str(Path.home() / "SYNAPSE" / ".env"),
+                    "ANTHROPIC_API_KEY",
                 )
+                if not api_key:
+                    raise RuntimeError(
+                        "RT_SIDECAR_LIVE_MODEL is set but ANTHROPIC_API_KEY is not"
+                    )
+                client = model_access.make_anthropic_client(
+                    api_key,
+                    base_url=base,
+                )
+            else:
+                http = model_access.sdk_http_module()
 
-            client = model_access.make_anthropic_client(
-                "offline-sidecar-probe",
-                transport=http.MockTransport(_probe_response),
-            )
+                def _probe_response(request: Any) -> Any:  # noqa: ARG001
+                    return http.Response(
+                        200,
+                        json={
+                            "id": "msg_sidecar_probe",
+                            "type": "message",
+                            "role": "assistant",
+                            "model": model,
+                            "content": [
+                                {"type": "text", "text": "sidecar payload check ok"}
+                            ],
+                            "stop_reason": "end_turn",
+                            "stop_sequence": None,
+                            "usage": {"input_tokens": 1, "output_tokens": 1},
+                        },
+                    )
+
+                client = model_access.make_anthropic_client(
+                    "offline-sidecar-probe",
+                    transport=http.MockTransport(_probe_response),
+                )
             prompt = str(context.get("prompt") or "sidecar payload check")
-            result = target(client, Dispatcher(is_testing=True), prompt)
+            turn_config = AgentTurnConfig(
+                max_tokens=int(os.environ.get("RT_SIDECAR_MAX_TOKENS", "4096")),
+                system="Reply with one short sentence.",
+            )
+            if "config" in signature.parameters:
+                result = target(
+                    client,
+                    Dispatcher(is_testing=True),
+                    prompt,
+                    config=turn_config,
+                )
+            else:
+                result = target(client, Dispatcher(is_testing=True), prompt)
         else:
             names = ", ".join(required_names)
             log(f"entry point {spec} needs arguments ({names}); not invoked")
             return {"status": "needs-arguments", "required": names}
         result_status = getattr(result, "status", None)
+        result_error = getattr(result, "error", None)
         log(
             f"entry point {spec} invoked ({type(result).__name__}"
             + (f": {result_status}" if result_status else "")
             + ")"
         )
+        if result_error:
+            log(f"entry point {spec} result error: {str(result_error)[:300]}")
         return {
             "status": "called",
             "result": repr(result)[:500],
             "result_status": None if result_status is None else str(result_status),
+            "result_error": None if not result_error else str(result_error)[:300],
         }
     except BaseException as exc:  # noqa: BLE001 - a payload must not kill the host
         log(f"entry point {spec} failed: {type(exc).__name__}: {exc}")

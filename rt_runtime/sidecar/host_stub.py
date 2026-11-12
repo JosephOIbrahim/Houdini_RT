@@ -10,9 +10,20 @@ HoudiniRT package. Its whole job is process identity plus a heartbeat:
 4. exit cleanly (state ``stopped``, exit 0) when the stop file appears, on
    SIGTERM/SIGINT, or when the recorded parent process dies.
 
-It serves nothing. The health endpoint and token check are contract S2 and
-belong in the block marked ``SHUTDOWN HOOKS`` / ``SERVE``: adding them must not
-change the lifecycle below.
+With ``--serve`` the S2 control surface replaces this heartbeat: the transport
+is the only status writer and answers ``/health``, ``/status``, ``/shutdown``
+and -- when ``--entry-point`` yields a callable -- the turn routes
+(``/turn``, ``/turn/<id>``, ``/cancel``). Without ``--serve`` the stub serves
+nothing and keeps its own heartbeat.
+
+Turn-related environment (all optional):
+
+* ``RT_SIDECAR_LIVE_MODEL=1`` -- call the real endpoint instead of the guarded
+  offline client.
+* ``RT_SIDECAR_TURN_TIMEOUT`` -- soft deadline per turn, seconds (default 120).
+* ``RT_SIDECAR_STARTUP_TURN=1`` -- run the one-shot payload probe on a
+  *serving* host. Off by default: the first real turn proves the path, and a
+  probe on every panel-driven launch spends tokens and delays ready.
 
 Run shape (the supervisor builds this; ``-I`` matters)::
 
@@ -41,9 +52,10 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 SCHEMA_VERSION = 1
 
@@ -242,14 +254,50 @@ def _resolve_entry_point(spec: str) -> Any:
     return target
 
 
-def _invoke_entry_point(spec: str, context: dict[str, Any],
-                        log: Any = None) -> dict[str, Any]:
-    """Invoke a payload entry point safely.
+def _env_flag(name: str) -> bool:
+    """True for the usual on spellings; absent or anything else is off."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
-    A no-argument callable is called with no arguments. A one-argument
-    callable receives the sidecar context dict. Anything requiring more
-    arguments is reported and *not* called: the host will not invent
-    credentials, a client, or a Houdini dispatcher for a multistep agent turn.
+
+def _sidecar_prompt(context: dict[str, Any] | None) -> str:
+    return str((context or {}).get("prompt") or "sidecar payload check")
+
+
+@dataclass
+class _TurnEntry:
+    """What ``--entry-point`` resolved to, and the turn closure it yielded.
+
+    ``closure`` -- when set -- has exactly the shape ``TurnLoop`` requires:
+    ``fn(prompt, *, cancel_event=None, max_tokens=None)``. Building it once at
+    startup is what keeps the model client, the sidecar-scoped policy file and
+    ``SYNAPSE_MODEL_POLICY`` startup-scoped instead of per-turn work.
+    """
+
+    spec: str
+    status: str  # "ready" | "needs-arguments" | "error"
+    closure: Callable[..., Any] | None = None
+    one_shot: bool = False
+    required: str | None = None
+    error: str | None = None
+
+
+def _build_turn_entry(
+    spec: str, context: dict[str, Any], log: Any = None
+) -> _TurnEntry:
+    """Resolve a payload entry point and adapt it to the turn-loop shape.
+
+    Three shapes are understood, unchanged from the S1 probe:
+
+    * no required argument -- called with no arguments;
+    * one required argument -- called with the sidecar context dict;
+    * ``(client, dispatcher, user_prompt)`` -- the named payload
+      (``synapse.cognitive.agent_loop.run_turn``), given a guarded model client
+      (no network) and a sidecar-scoped policy that approves exactly this model
+      and endpoint, or the live endpoint when ``RT_SIDECAR_LIVE_MODEL=1``.
+
+    Anything else is reported and *not* called: the host will not invent
+    credentials, a client, or a Houdini dispatcher. A mis-shaped payload is
+    recorded here and never kills the host.
     """
     log = log or (lambda message: None)
     try:
@@ -265,11 +313,26 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
             )
         ]
         required_names = [parameter.name for parameter in required]
+
         if not required:
-            result = target()
-        elif len(required) == 1:
-            result = target(context)
-        elif required_names == ["client", "dispatcher", "user_prompt"]:
+
+            def closure(
+                prompt: str, *, cancel_event: Any = None, max_tokens: Any = None
+            ) -> Any:
+                return target()
+
+            return _TurnEntry(spec=spec, status="ready", closure=closure, one_shot=True)
+
+        if len(required) == 1:
+
+            def closure(
+                prompt: str, *, cancel_event: Any = None, max_tokens: Any = None
+            ) -> Any:
+                return target(context)
+
+            return _TurnEntry(spec=spec, status="ready", closure=closure, one_shot=True)
+
+        if required_names == ["client", "dispatcher", "user_prompt"]:
             # The named payload (synapse.cognitive.agent_loop.run_turn) needs a
             # model client, a dispatcher and a prompt. Build a guarded client
             # with a no-network transport and a sidecar-scoped policy that
@@ -284,9 +347,7 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
                 os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com"
             ).rstrip("/")
             endpoint = base + "/v1/messages"
-            live = os.environ.get("RT_SIDECAR_LIVE_MODEL", "").strip().lower() in (
-                "1", "true", "yes", "on"
-            )
+            live = _env_flag("RT_SIDECAR_LIVE_MODEL")
             log(f"entry point probe mode: {'live' if live else 'offline'}")
             state_dir = Path(str(context.get("state_dir") or "."))
             policy_path = state_dir / "model_access.json"
@@ -348,33 +409,73 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
                     "offline-sidecar-probe",
                     transport=http.MockTransport(_probe_response),
                 )
-            prompt = str(context.get("prompt") or "sidecar payload check")
-            turn_config = AgentTurnConfig(
-                max_tokens=int(os.environ.get("RT_SIDECAR_MAX_TOKENS", "4096")),
-                system="Reply with one short sentence.",
-            )
-            if "config" in signature.parameters:
-                result = target(
+
+            default_max_tokens = int(os.environ.get("RT_SIDECAR_MAX_TOKENS", "4096"))
+            accepts_config = "config" in signature.parameters
+            accepts_cancel = "cancel_event" in signature.parameters
+
+            def closure(
+                prompt: str, *, cancel_event: Any = None, max_tokens: Any = None
+            ) -> Any:
+                """One turn: fresh dispatcher and config, shared guarded client.
+
+                A fresh ``Dispatcher`` per turn is cheap and removes the only
+                shared-state risk if a quarantined worker overlaps a new turn.
+                ``cancel_event`` is the payload's existing cooperative hook.
+                """
+                turn_config = AgentTurnConfig(
+                    max_tokens=int(max_tokens or default_max_tokens),
+                    system="Reply with one short sentence.",
+                )
+                kwargs: dict[str, Any] = {}
+                if accepts_config:
+                    kwargs["config"] = turn_config
+                if accepts_cancel:
+                    kwargs["cancel_event"] = cancel_event
+                return target(
                     client,
                     Dispatcher(is_testing=True),
                     prompt,
-                    config=turn_config,
+                    **kwargs,
                 )
-            else:
-                result = target(client, Dispatcher(is_testing=True), prompt)
-        else:
-            names = ", ".join(required_names)
-            log(f"entry point {spec} needs arguments ({names}); not invoked")
-            return {"status": "needs-arguments", "required": names}
+
+            return _TurnEntry(spec=spec, status="ready", closure=closure, one_shot=True)
+
+        names = ", ".join(required_names)
+        log(f"entry point {spec} needs arguments ({names}); not invoked")
+        return _TurnEntry(
+            spec=spec, status="needs-arguments", required=names, one_shot=False
+        )
+    except BaseException as exc:  # noqa: BLE001 - a payload must not kill the host
+        log(f"entry point {spec} failed: {type(exc).__name__}: {exc}")
+        return _TurnEntry(
+            spec=spec,
+            status="error",
+            error=f"{type(exc).__name__}: {exc}",
+            one_shot=False,
+        )
+
+
+def _invoke_once(
+    entry: _TurnEntry, prompt: str, log: Any = None
+) -> dict[str, Any]:
+    """Run one probe turn through the built closure and describe what happened."""
+    log = log or (lambda message: None)
+    if entry.status == "needs-arguments":
+        return {"status": "needs-arguments", "required": entry.required}
+    if entry.closure is None:
+        return {"status": "error", "error": entry.error or entry.status}
+    try:
+        result = entry.closure(prompt)
         result_status = getattr(result, "status", None)
         result_error = getattr(result, "error", None)
         log(
-            f"entry point {spec} invoked ({type(result).__name__}"
+            f"entry point {entry.spec} invoked ({type(result).__name__}"
             + (f": {result_status}" if result_status else "")
             + ")"
         )
         if result_error:
-            log(f"entry point {spec} result error: {str(result_error)[:300]}")
+            log(f"entry point {entry.spec} result error: {str(result_error)[:300]}")
         return {
             "status": "called",
             "result": repr(result)[:500],
@@ -382,8 +483,20 @@ def _invoke_entry_point(spec: str, context: dict[str, Any],
             "result_error": None if not result_error else str(result_error)[:300],
         }
     except BaseException as exc:  # noqa: BLE001 - a payload must not kill the host
-        log(f"entry point {spec} failed: {type(exc).__name__}: {exc}")
+        log(f"entry point {entry.spec} failed: {type(exc).__name__}: {exc}")
         return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _invoke_entry_point(spec: str, context: dict[str, Any],
+                        log: Any = None) -> dict[str, Any]:
+    """Build the turn entry and run today's one-shot probe (S1 behaviour).
+
+    Kept as the single callable the S1 tests drive. A no-argument callable is
+    called with no arguments, a one-argument callable receives the sidecar
+    context dict, and the named agent-turn payload gets built doubles.
+    """
+    entry = _build_turn_entry(spec, context, log)
+    return _invoke_once(entry, _sidecar_prompt(context), log)
 
 
 def _base_record(args: argparse.Namespace, started_mono: float) -> dict[str, Any]:
@@ -491,7 +604,27 @@ def main(argv: list[str] | None = None) -> int:
     # ready can connect. Without --serve this whole block is skipped and the
     # stub keeps its own heartbeat: Tier 0, serves nothing.
     server = None
+    turn_loop = None
     shutdown_event = threading.Event()
+
+    # One closure drives both the one-shot probe and, with --serve, the turn
+    # loop. Resolution failures are logged and carried; they never stop the
+    # host from publishing /health and /status.
+    def _entry_context() -> dict[str, Any]:
+        return {
+            "instance": args.instance,
+            "pid": os.getpid(),
+            "state_dir": os.fspath(state_dir),
+            "status_path": os.fspath(status_path),
+            "runtime_home": args.runtime_home,
+            "site_packages": list(args.site_packages),
+            "python_version": record["python_version"],
+            "sys_prefix": record["sys_prefix"],
+        }
+
+    context: dict[str, Any] | None = None
+    entry: _TurnEntry | None = None
+
     if args.serve:
         try:
             # -I keeps the script directory off sys.path, so the sibling
@@ -500,6 +633,12 @@ def main(argv: list[str] | None = None) -> int:
             if here not in sys.path:
                 sys.path.append(here)
             import transport  # the sidecar's own module, never an RT package
+
+            # A serving host must resolve the payload before it can build the
+            # turn loop; this is the only ordering change --serve introduces.
+            if args.entry_point:
+                context = _entry_context()
+                entry = _build_turn_entry(args.entry_point, context, _log)
 
             if not args.token_file:
                 raise RuntimeError("--serve requires --token-file")
@@ -524,6 +663,25 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if record.get(key) is not None
             }
+
+            if entry is not None and entry.closure is not None:
+                # The turn loop lives next to this host and imports no payload
+                # module, so importing it here keeps the Tier 0 graph intact.
+                import turn_loop as turn_loop_module
+
+                try:
+                    turn_timeout = float(
+                        os.environ.get("RT_SIDECAR_TURN_TIMEOUT") or 120.0
+                    )
+                except ValueError:
+                    turn_timeout = 120.0
+                if turn_timeout <= 0:
+                    turn_timeout = 120.0
+                turn_loop = turn_loop_module.TurnLoop(
+                    entry.closure, timeout_s=turn_timeout
+                )
+                _log(f"turn loop ready (timeout {turn_timeout:.0f}s)")
+
             server = transport.ControlServer(
                 token=token,
                 host="127.0.0.1",
@@ -533,12 +691,18 @@ def main(argv: list[str] | None = None) -> int:
                 on_shutdown=shutdown_event.set,
                 heartbeat_interval=interval,
                 entry_point=args.entry_point,
+                turn_loop=turn_loop,
                 extra_status=extra_status,
                 log_sink=_log,
             )
             bound_port = server.start()
             _log(f"control listening on 127.0.0.1:{bound_port}")
         except BaseException as exc:  # noqa: BLE001 - record, never half-serve
+            if turn_loop is not None:
+                try:
+                    turn_loop.shutdown(2.0)
+                except BaseException:
+                    pass
             if server is not None:
                 try:
                     server.stop()
@@ -568,20 +732,25 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_ERROR
         _log("state=ready")
 
-    if args.entry_point:
-        context = {
-            "instance": args.instance,
-            "pid": os.getpid(),
-            "state_dir": os.fspath(state_dir),
-            "status_path": os.fspath(status_path),
-            "runtime_home": args.runtime_home,
-            "site_packages": list(args.site_packages),
-            "python_version": record["python_version"],
-            "sys_prefix": record["sys_prefix"],
-        }
+    # The startup probe is a compatibility check, not a service.
+    # * Non-serving host: ready is published first, then the probe runs in a
+    #   daemon thread -- exactly the S1 lifecycle. A slow payload import can
+    #   never delay (or deny) the ready transition.
+    # * Serving host: opt in with RT_SIDECAR_STARTUP_TURN=1. A serving launch
+    #   already proves the payload loaded through /status, and the first real
+    #   turn is the better end-to-end check; an unconditional probe would spend
+    #   tokens on every panel-driven launch.
+    if not args.serve and args.entry_point:
+        context = _entry_context()
+        entry = _build_turn_entry(args.entry_point, context, _log)
+
+    run_probe = entry is not None and entry.one_shot and (
+        not args.serve or _env_flag("RT_SIDECAR_STARTUP_TURN")
+    )
+    if run_probe and entry is not None:
         threading.Thread(
-            target=_invoke_entry_point,
-            args=(args.entry_point, context, _log),
+            target=_invoke_once,
+            args=(entry, _sidecar_prompt(context), _log),
             name="rt-entry-point",
             daemon=True,
         ).start()
@@ -619,6 +788,11 @@ def main(argv: list[str] | None = None) -> int:
 
             time.sleep(sleep_for)
     except BaseException as exc:  # noqa: BLE001 - a crash must be recorded
+        if turn_loop is not None:
+            try:
+                turn_loop.shutdown(2.0)
+            except BaseException:
+                pass
         if server is not None:
             try:
                 server.stop()
@@ -637,6 +811,19 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- Graceful shutdown --------------------------------------------------
     _log(f"stopping reason={stop_reason}")
+
+    # Cancel a running turn and give it at most 2 s to stop. The worker is a
+    # daemon thread, so a payload that ignores the event cannot delay exit.
+    if turn_loop is not None:
+        try:
+            cleared = turn_loop.shutdown(2.0)
+            if not cleared:
+                _log(
+                    "turn worker did not stop within 2.0s; it is a daemon and "
+                    "will die with the process"
+                )
+        except BaseException as exc:  # noqa: BLE001
+            _log(f"turn loop shutdown failed: {exc!r}")
 
     if server is not None:
         # The transport writes stopping -> stopped, closes the listener, and

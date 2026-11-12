@@ -78,7 +78,8 @@ py -3.12 -m pytest "tests/test_state_contract.py::test_state_json_schema" -q
 
 ```text
 py -3.12 -m pytest tests -q
-74 passed in 2.02s        (2026-11-11, CPython 3.12.10, no Houdini)
+207 passed, 18 skipped    (2026-11-12, CPython 3.12.10, no Houdini)
+224 passed, 1 skipped     (2026-11-12, CPython 3.14.2, no Houdini)
 ```
 
 That is 29 contract tests plus 45 tests written by the adapter/compat agents.
@@ -275,7 +276,7 @@ uninstall path.
 
 ## First check a human should run
 
-1. `py -3.12 -m pytest tests -q` — expect 74 passed. This is the fastest proof
+1. `py -3.12 -m pytest tests -q` — expect 207 passed, 18 skipped. This is the fastest proof
    the tree is internally consistent.
 2. Then Houdini Check A above — the panel install is the smallest live surface
    and fails loudly if the package JSON or panel path is wrong.

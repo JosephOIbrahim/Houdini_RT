@@ -17,7 +17,7 @@ it, refuses it, and runs it as a supervised sidecar instead.
 real `run_turn` returns complete. The in-process guard correctly refuses the
 cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
 
-**Tests:** 176 pass on Python 3.14; 159 pass with skips on 3.12.
+**Tests:** 224 pass on Python 3.14; 207 pass with skips on 3.12.
 
 ---
 
@@ -167,7 +167,8 @@ stdlib APIs may still fail.
 - A supervised CPython 3.14 process, started with the runtime tree in front.
 - A lock, a heartbeat and an atomically written `status.json`.
 - A loopback HTTP control surface with a per-launch token: `/health`, `/status`,
-  `/shutdown`.
+  `/shutdown`, and a turn service — `POST /turn`, `GET /turn/<id>`,
+  `POST /cancel`. One turn at a time, cooperative cancel, bounded results.
 - `entry_point` reaches the host as `--entry-point`. The host invokes a no-arg
   target, a one-context target, or the `run_turn` shape with a guarded client and
   dispatcher.
@@ -182,8 +183,8 @@ stdlib APIs may still fail.
 py -3.12 -m pytest tests -q -p no:cacheprovider
 ```
 
-- **Python 3.12:** 159 passed, 18 skipped (3.14-only sidecar lifecycle tests skip).
-- **Python 3.14:** 176 passed, 1 skipped.
+- **Python 3.12:** 207 passed, 18 skipped (3.14-only sidecar lifecycle tests skip).
+- **Python 3.14:** 224 passed, 1 skipped.
 
 The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`. CI runs
 3.12/3.13 on Ubuntu and the full suite on 3.14 on Windows.

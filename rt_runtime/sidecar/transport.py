@@ -3,7 +3,9 @@
 Design record: ``IPC.md`` (same directory as this repo's work root).
 
 One job: expose a minimal, authenticated, loopback-only control surface that
-answers ``GET /health``, ``GET /status`` and ``POST /shutdown``. Nothing else.
+answers ``GET /health``, ``GET /status``, ``POST /shutdown``, and -- when the
+host supplies a turn loop -- ``POST /turn``, ``GET /turn/<request_id>`` and
+``POST /cancel``. Nothing else.
 
 Hard properties enforced here:
 
@@ -11,14 +13,26 @@ Hard properties enforced here:
   ``0.0.0.0``, ``::``, LAN addresses and hostnames are refused before bind, and
   the bound address is re-checked after bind.
 * Every route that reveals state or changes state requires the per-launch token
-  in ``X-RT-Token``, compared with :func:`hmac.compare_digest`.
-* Request bodies are length-checked before they are read, capped at
-  ``max_body_bytes`` and then discarded unparsed. No route reads a path from the
-  caller, spawns a process, or evaluates code.
+  in ``X-RT-Token``, compared with :func:`hmac.compare_digest`. ``/health`` is
+  the one exception, and it stays token-free and turn-blind.
+* Request bodies are length-checked before they are read, capped per route
+  (``max_body_bytes`` for the control routes, ``max_turn_body_bytes`` for
+  ``POST /turn``) and then discarded unparsed -- except ``/turn`` and
+  ``/cancel``, whose bodies are parsed *after* the token check. No route reads
+  a path from the caller, spawns a process, or evaluates code.
+* No turn work ever runs on a handler thread. The transport only admits,
+  polls, cancels and waits (``wait_ms``, bounded by the turn loop); the loop
+  owns the worker.
 * Requests that look like browser traffic (``Origin`` / ``Sec-Fetch-*``) are
   refused, and ``Host`` must name a loopback literal, which closes the
   DNS-rebinding path.
 * Every response carries ``Connection: close``; keep-alive is not offered.
+
+The turn loop is duck-typed, never imported: the transport expects
+``parse_request``, ``submit``, ``poll``, ``wait``, ``cancel`` and
+``status_fields``, and maps any exception carrying an integer ``http_status``
+attribute to that status (``code``, ``message`` and ``detail`` describe it).
+That keeps this module's import graph unchanged.
 
 The client helper at the bottom deliberately uses ``http.client`` rather than
 ``urllib.request``: urllib honours ``HTTP_PROXY`` / ``HTTPS_PROXY`` from the
@@ -36,6 +50,7 @@ import ipaddress
 import json
 import os
 import platform
+import re
 import secrets
 import socket
 import socketserver
@@ -59,6 +74,8 @@ __all__ = [
     "TOKEN_HEADER",
     "SCHEMA_VERSION",
     "MAX_BODY_BYTES",
+    "MAX_TURN_BODY_BYTES",
+    "MAX_TURN_RESPONSE_BYTES",
     "MAX_PATH_BYTES",
     "MAX_CONNECTIONS",
     "STATUS_FILE_NAME",
@@ -84,6 +101,19 @@ TOKEN_HEADER = "X-RT-Token"
 #: Largest request body the control surface will accept, in bytes.
 MAX_BODY_BYTES = 4096
 
+#: Largest ``POST /turn`` body, in bytes. A prompt is caller data, so the cap
+#: leaves room for 16 Ki characters of worst-case UTF-8 plus the JSON envelope.
+#: Mirrors ``rt_runtime.sidecar.turn_loop.MAX_TURN_BODY_BYTES``: the transport
+#: enforces it before reading, the loop's parser keeps the same rule.
+MAX_TURN_BODY_BYTES = 131072
+
+#: Largest response body the client helper will read. A terminal turn document
+#: carries up to 64 Ki characters of result text, and ``_send`` serialises with
+#: ``ensure_ascii`` on: one non-ASCII character can become six bytes
+#: (``\\uXXXX``), so a legal document can approach 384 KiB. 1 MiB reads any
+#: legal response whole; the historical 64 KiB read truncated the small ones.
+MAX_TURN_RESPONSE_BYTES = 1048576
+
 #: Largest request target (path + query) accepted, in bytes.
 MAX_PATH_BYTES = 2048
 
@@ -107,6 +137,14 @@ MIN_TOKEN_LENGTH = 16
 
 #: Hosts that may be bound. Everything else is refused.
 _LOOPBACK_BIND_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+#: Request ids the turn routes accept. Mirrors ``turn_loop.MAX_REQUEST_ID_CHARS``.
+_TURN_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+#: Turn job states that will never change again, so ``POST /turn`` can answer
+#: 200 instead of 202. Mirrors ``turn_loop.STATE_*``; the transport does not
+#: import the loop to learn four words.
+_TURN_TERMINAL_STATES = frozenset({"complete", "cancelled", "error", "timeout"})
 
 _STATE_STARTING = "starting"
 _STATE_READY = "ready"
@@ -608,6 +646,7 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
 
+        body: bytes | None = None
         if method in ("GET", "HEAD"):
             raw_length = self.headers.get("Content-Length")
             if raw_length is not None:
@@ -620,7 +659,7 @@ class _Handler(BaseHTTPRequestHandler):
                     self._send(400, {"ok": False, "error": "body_not_allowed"})
                     return
         elif method in ("POST", "PUT", "PATCH", "DELETE"):
-            problem = self._consume_body(control)
+            body, problem = self._consume_body(control, path)
             if problem is not None:
                 self._send(*problem)
                 return
@@ -656,7 +695,198 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(code, payload)
             return
 
+        # -- turn routes (absent unless the host supplied a turn loop) --------
+        if path == "/turn":
+            self._route_turn(method, control, body)
+            return
+
+        if path.startswith("/turn/"):
+            self._route_turn_poll(method, control, path)
+            return
+
+        if path == "/cancel":
+            self._route_cancel(method, control, body)
+            return
+
         self._send(404, {"ok": False, "error": "not_found"})
+
+    # -- turn routes ------------------------------------------------------
+
+    def _route_turn(
+        self, method: str, control: "ControlServer", body: bytes | None
+    ) -> None:
+        """``POST /turn``: admit a turn, optionally waiting ``wait_ms``."""
+        if method != "POST":
+            self._method_not_allowed("POST")
+            return
+        if not self._token_ok(control):
+            self._unauthorized()
+            return
+
+        loop = control.turn_loop
+        if loop is None:
+            self._send(503, {"ok": False, "error": "turn_unavailable"})
+            return
+        parser = getattr(loop, "parse_request", None)
+        if parser is None:
+            # A loop without a parser cannot enforce the documented body
+            # contract; refuse rather than admit an unvalidated prompt.
+            self._send(503, {"ok": False, "error": "turn_unavailable"})
+            return
+
+        try:
+            request = parser(body if body is not None else b"")
+            document = loop.submit(request)
+        except Exception as exc:  # noqa: BLE001 - mapped by http_status
+            if self._send_turn_error(exc):
+                return
+            raise
+
+        wait_ms = int(getattr(request, "wait_ms", 0) or 0)
+        request_id = document.get("request_id")
+        if wait_ms > 0 and request_id:
+            settled = loop.wait(request_id, wait_ms / 1000.0)
+            if settled is not None:
+                document = settled
+
+        code = 200 if document.get("state") in _TURN_TERMINAL_STATES else 202
+        self._send(code, document)
+
+    def _route_turn_poll(
+        self, method: str, control: "ControlServer", path: str
+    ) -> None:
+        """``GET|HEAD /turn/<request_id>``: the job document, at any time."""
+        if method not in ("GET", "HEAD"):
+            self._method_not_allowed("GET, HEAD")
+            return
+        if not self._token_ok(control):
+            self._unauthorized()
+            return
+
+        loop = control.turn_loop
+        if loop is None:
+            self._send(503, {"ok": False, "error": "turn_unavailable"})
+            return
+
+        request_id = path[len("/turn/"):]
+        if not request_id or "/" in request_id:
+            self._send(404, {"ok": False, "error": "not_found"})
+            return
+        if not _TURN_REQUEST_ID_RE.match(request_id):
+            self._send(404, {"ok": False, "error": "unknown_request_id"})
+            return
+
+        try:
+            document = loop.poll(request_id)
+        except Exception as exc:  # noqa: BLE001 - mapped by http_status
+            if self._send_turn_error(exc):
+                return
+            raise
+
+        if document is None:
+            self._send(404, {"ok": False, "error": "unknown_request_id"})
+            return
+        self._send(200, document)
+
+    def _route_cancel(
+        self, method: str, control: "ControlServer", body: bytes | None
+    ) -> None:
+        """``POST /cancel``: set the running turn's cancel event."""
+        if method != "POST":
+            self._method_not_allowed("POST")
+            return
+        if not self._token_ok(control):
+            self._unauthorized()
+            return
+
+        loop = control.turn_loop
+        if loop is None:
+            self._send(503, {"ok": False, "error": "turn_unavailable"})
+            return
+
+        request_id = self._parse_cancel_body(body)
+        if request_id is None:
+            return  # the 400 is already sent
+
+        try:
+            document = loop.cancel(request_id)
+        except Exception as exc:  # noqa: BLE001 - mapped by http_status
+            if self._send_turn_error(exc):
+                return
+            raise
+
+        self._send(
+            202,
+            {
+                "ok": True,
+                "request_id": document.get("request_id", request_id),
+                "state": document.get("state", "cancelling"),
+            },
+        )
+
+    def _parse_cancel_body(self, body: bytes | None) -> str | None:
+        """Return a valid request id, or answer 400 and return ``None``."""
+        problem: str | None = None
+        request_id: Any = None
+
+        if not body:
+            problem = "body must be a JSON object"
+        else:
+            try:
+                data = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                problem = "body is not valid JSON"
+            else:
+                if not isinstance(data, dict):
+                    problem = "body must be a JSON object"
+                else:
+                    unknown = sorted(str(key) for key in set(data) - {"request_id"})
+                    if unknown:
+                        problem = "unknown field(s): " + ", ".join(unknown)
+                    else:
+                        request_id = data.get("request_id")
+                        if not isinstance(request_id, str) or not (
+                            _TURN_REQUEST_ID_RE.match(request_id)
+                        ):
+                            problem = (
+                                "request_id must be 1-64 characters of "
+                                "[A-Za-z0-9_-]"
+                            )
+
+        if problem is not None:
+            self._send(
+                400,
+                {"ok": False, "error": "turn_bad_request", "detail": problem},
+            )
+            return None
+        return str(request_id)
+
+    def _send_turn_error(self, exc: BaseException) -> bool:
+        """Answer a turn error without importing the turn loop's hierarchy.
+
+        The loop's exceptions carry ``http_status`` (int), ``code``,
+        ``message`` and ``detail``. Anything else returns False so the caller
+        can re-raise into the generic 500 path.
+        """
+        status = getattr(exc, "http_status", None)
+        if isinstance(status, bool) or not isinstance(status, int):
+            return False
+
+        payload: dict[str, Any] = {
+            "ok": False,
+            "error": str(getattr(exc, "code", "turn_error")),
+        }
+        message = getattr(exc, "message", "")
+        if message:
+            payload["detail"] = str(message)[:2000]
+        detail = getattr(exc, "detail", None)
+        if isinstance(detail, dict):
+            payload.update({str(key): value for key, value in detail.items()})
+
+        # One turn at a time: tell the caller when to come back.
+        extra = (("Retry-After", "1"),) if status == 429 else ()
+        self._send(status, payload, extra_headers=extra)
+        return True
 
     # -- request helpers --------------------------------------------------
 
@@ -672,48 +902,67 @@ class _Handler(BaseHTTPRequestHandler):
             return False
         return control.check_token(supplied)
 
-    def _consume_body(self, control: "ControlServer") -> tuple[int, dict] | None:
+    def _consume_body(
+        self, control: "ControlServer", path: str
+    ) -> tuple[bytes | None, tuple[int, dict] | None]:
+        """Read the body (bounded, per-route cap) and return it.
+
+        The body is returned rather than discarded so ``/turn`` and ``/cancel``
+        can parse it *after* the token check. Every other route ignores the
+        value, which keeps the historical "read and discard" behaviour.
+        """
         raw_length = self.headers.get("Content-Length")
         if raw_length is None:
-            return None
+            return None, None
+
+        cap = control.body_cap_for(path)
         try:
             length = int(raw_length)
         except (TypeError, ValueError):
-            return (400, {"ok": False, "error": "bad_content_length"})
+            return None, (400, {"ok": False, "error": "bad_content_length"})
         if length < 0:
-            return (400, {"ok": False, "error": "bad_content_length"})
-        if length > control.max_body_bytes:
+            return None, (400, {"ok": False, "error": "bad_content_length"})
+        if length > cap:
             return (
-                413,
-                {
-                    "ok": False,
-                    "error": "request_too_large",
-                    "limit": control.max_body_bytes,
-                },
+                None,
+                (
+                    413,
+                    {
+                        "ok": False,
+                        "error": "request_too_large",
+                        "limit": cap,
+                    },
+                ),
             )
-        if length:
-            try:
-                self.rfile.read(length)
-            except (TimeoutError, OSError):
-                return (400, {"ok": False, "error": "body_read_failed"})
-        return None
+        if not length:
+            return b"", None
+        try:
+            data = self.rfile.read(length)
+        except (TimeoutError, OSError):
+            return None, (400, {"ok": False, "error": "body_read_failed"})
+        return data, None
 
     def handle_expect_100(self) -> bool:  # noqa: D401
         """Validate size before inviting the body, instead of after."""
         control = self.server.control
+        try:
+            path = urlsplit(self.path).path or "/"
+        except ValueError:
+            path = "/"
+        cap = control.body_cap_for(path)
         raw_length = self.headers.get("Content-Length")
         try:
             length = int(raw_length) if raw_length is not None else 0
         except (TypeError, ValueError):
             self._send(400, {"ok": False, "error": "bad_content_length"})
             return False
-        if length > control.max_body_bytes:
+        if length > cap:
             self._send(
                 413,
                 {
                     "ok": False,
                     "error": "request_too_large",
-                    "limit": control.max_body_bytes,
+                    "limit": cap,
                 },
             )
             return False
@@ -812,6 +1061,8 @@ class ControlServer:
         shutdown_delay: float = 0.0,
         heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL,
         max_body_bytes: int = MAX_BODY_BYTES,
+        turn_loop: Any = None,
+        max_turn_body_bytes: int = MAX_TURN_BODY_BYTES,
         health_requires_token: bool = False,
         reject_browser_requests: bool = True,
         enforce_host_header: bool = True,
@@ -832,6 +1083,8 @@ class ControlServer:
             raise ValueError(f"port out of range: {port!r}")
         if int(max_body_bytes) <= 0:
             raise ValueError("max_body_bytes must be positive")
+        if int(max_turn_body_bytes) <= 0:
+            raise ValueError("max_turn_body_bytes must be positive")
 
         self._host = normalise_host(host)
         self._host_actual: str | None = None
@@ -847,6 +1100,10 @@ class ControlServer:
         self.instance_id = instance_id or uuid.uuid4().hex
         self.entry_point = entry_point
         self.max_body_bytes = int(max_body_bytes)
+        # Duck-typed: parse_request / submit / poll / wait / cancel /
+        # status_fields. None means this host serves no turns (503).
+        self.turn_loop = turn_loop
+        self.max_turn_body_bytes = int(max_turn_body_bytes)
         self.health_requires_token = bool(health_requires_token)
         self.reject_browser_requests = bool(reject_browser_requests)
         self.enforce_host_header = bool(enforce_host_header)
@@ -1042,6 +1299,16 @@ class ControlServer:
     def _count_request(self) -> None:
         self._requests_total += 1
 
+    def body_cap_for(self, path: str) -> int:
+        """Per-route body cap.
+
+        Only ``POST /turn`` accepts caller-sized input; ``/cancel`` carries one
+        request id and keeps the control cap. ``Expect: 100-continue`` and the
+        reader both ask here, so a legal 16 Ki-character prompt is not rejected
+        at 4 KiB before the route is known.
+        """
+        return self.max_turn_body_bytes if path == "/turn" else self.max_body_bytes
+
     def check_token(self, supplied: str) -> bool:
         """Constant-time token comparison."""
         try:
@@ -1111,6 +1378,18 @@ class ControlServer:
             ),
         }
         fields.update(self._extra_status)
+
+        # Turn counters last: they are live, and they are the one part of the
+        # document this class does not own. Never prompt, result text or error
+        # message -- ``TurnLoop.status_fields`` guarantees counts only.
+        loop = self.turn_loop
+        if loop is not None:
+            try:
+                turn_fields = loop.status_fields()
+            except Exception:  # noqa: BLE001 - status must never break a beat
+                turn_fields = None
+            if isinstance(turn_fields, dict):
+                fields.update(turn_fields)
         return fields
 
     def _heartbeat_fields(self) -> dict[str, Any]:
@@ -1233,6 +1512,10 @@ def request(
 
     Uses ``http.client`` directly so ``HTTP_PROXY`` in the environment can never
     route ``X-RT-Token`` off the machine.
+
+    A caller that sets ``wait_ms`` on ``POST /turn`` must pass
+    ``timeout >= wait_ms / 1000 + 1.0``: the default 2.0 s is exactly the
+    maximum wait and leaves no room for the response.
     """
     host, port = _parse_base_url(base_url)
 
@@ -1260,7 +1543,9 @@ def request(
     try:
         connection.request(method, path, body=payload, headers=send_headers)
         response = connection.getresponse()
-        raw = response.read(65536)
+        # A terminal turn document can approach MAX_TURN_RESPONSE_BYTES; the old
+        # 64 KiB read would silently truncate it into invalid JSON.
+        raw = response.read(MAX_TURN_RESPONSE_BYTES)
         status = int(response.status)
     finally:
         connection.close()

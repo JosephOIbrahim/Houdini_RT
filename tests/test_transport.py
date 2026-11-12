@@ -12,6 +12,8 @@ Coverage map (the S1 acceptance surface):
 * shutdown callback invoked exactly once               -> test_shutdown_*
 * fixed-port collision handled                         -> test_port_*
 * status.json shape and heartbeat movement             -> test_status_*
+* turn routes: 401/202/200/409/429/413/404/405, cancel,
+  /status counters, /health turn-blind                 -> test_turn_* / test_cancel_*
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ from rt_runtime.sidecar.transport import (
     token_fingerprint,
     write_token_file,
 )
+from rt_runtime.sidecar.turn_loop import TurnLoop
 
 TOKEN = "test-token-0123456789abcdef"
 WRONG_TOKEN = "test-token-fedcba9876543210"
@@ -887,3 +890,395 @@ def test_server_stop_is_idempotent(make_server):
 
     assert server.state == "stopped"
     assert server.listener_closed.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Turn routes (POST /turn, GET /turn/<id>, POST /cancel)
+# ---------------------------------------------------------------------------
+
+
+class _TurnResult:
+    """Minimal ``AgentTurnResult`` stand-in: the loop only reads attributes."""
+
+    def __init__(self, status: str = "complete", text: str = "") -> None:
+        self.status = status
+        self.iterations = 1
+        self.tool_calls_made = 0
+        self.error = ""
+        self.messages = []
+        self.usage = []
+        if text:
+            self.text = text
+
+
+def fast_loop() -> TurnLoop:
+    """A loop whose turn completes immediately and echoes the prompt."""
+
+    def entry(prompt, *, cancel_event=None, max_tokens=None):
+        return _TurnResult(text=f"echo: {prompt}")
+
+    return TurnLoop(entry, timeout_s=5.0)
+
+
+def blocking_loop(release) -> TurnLoop:
+    """A loop whose single turn stays running until *release* is set."""
+
+    def entry(prompt, *, cancel_event=None, max_tokens=None):
+        release.wait(5.0)
+        return _TurnResult(text="done")
+
+    return TurnLoop(entry, timeout_s=10.0)
+
+
+def cooperative_loop(started) -> TurnLoop:
+    """A loop whose turn exits as soon as the cancel event is set."""
+
+    def entry(prompt, *, cancel_event=None, max_tokens=None):
+        started.set()
+        while not cancel_event.wait(0.005):
+            pass
+        return _TurnResult(status="cancelled")
+
+    return TurnLoop(entry, timeout_s=5.0)
+
+
+def send_json(
+    server,
+    path,
+    body=None,
+    *,
+    method: str = "POST",
+    token: str | None = TOKEN,
+    timeout: float = 5.0,
+):
+    """Send JSON (or nothing) and return ``(response, parsed_body)``.
+
+    The response object is kept after the connection closes so a test can read
+    headers such as ``Retry-After``.
+    """
+    connection = http.client.HTTPConnection(server.host, server.port, timeout=timeout)
+    headers: dict[str, str] = {}
+    payload = None
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers[TOKEN_HEADER] = token
+    try:
+        connection.request(method, path, body=payload, headers=headers)
+        response = connection.getresponse()
+        raw = response.read()
+        parsed = json.loads(raw) if raw else {}
+    finally:
+        connection.close()
+    return response, parsed
+
+
+def test_turn_requires_token(make_server):
+    server, _ = make_server(turn_loop=fast_loop())
+
+    response, body = send_json(server, "/turn", {"prompt": "hi"}, token=None)
+
+    assert response.status == 401
+    assert body["error"] == "unauthorized"
+
+
+def test_turn_admitted_returns_202(make_server):
+    release = threading.Event()
+    loop = blocking_loop(release)
+    server, _ = make_server(turn_loop=loop)
+    try:
+        response, body = send_json(server, "/turn", {"prompt": "SECRET-PROMPT"})
+
+        assert response.status == 202
+        assert body["ok"] is False
+        assert body["state"] == "running"
+        assert body["request_id"]
+        assert body["poll"] == f"/turn/{body['request_id']}"
+        assert body["result"] is None
+        assert body["error_kind"] is None
+        assert response.getheader("Connection") == "close"
+    finally:
+        release.set()
+        loop.shutdown(1.0)
+
+
+def test_turn_wait_ms_returns_200_terminal(make_server):
+    server, _ = make_server(turn_loop=fast_loop())
+
+    response, body = send_json(
+        server, "/turn", {"prompt": "ping", "wait_ms": 2000}
+    )
+
+    assert response.status == 200
+    assert body["ok"] is True
+    assert body["state"] == "complete"
+    assert body["error_kind"] is None
+    assert body["result"]["status"] == "complete"
+    assert body["result"]["text"] == "echo: ping"
+    assert body["request_id"] in body["poll"]
+
+
+def test_turn_duplicate_request_id_409(make_server):
+    release = threading.Event()
+    loop = blocking_loop(release)
+    server, _ = make_server(turn_loop=loop)
+    try:
+        first, _ = send_json(
+            server, "/turn", {"prompt": "a", "request_id": "fixed-1"}
+        )
+        assert first.status == 202
+
+        second, body = send_json(
+            server, "/turn", {"prompt": "b", "request_id": "fixed-1"}
+        )
+        assert second.status == 409
+        assert body["error"] == "duplicate_request_id"
+    finally:
+        release.set()
+        loop.shutdown(1.0)
+
+
+def test_turn_busy_429_carries_retry_after(make_server):
+    release = threading.Event()
+    loop = blocking_loop(release)
+    server, _ = make_server(turn_loop=loop)
+    try:
+        first, admitted = send_json(server, "/turn", {"prompt": "a"})
+        assert first.status == 202
+
+        second, body = send_json(server, "/turn", {"prompt": "b"})
+
+        assert second.status == 429
+        assert body["error"] == "turn_in_progress"
+        assert body["active_request_id"] == admitted["request_id"]
+        assert second.getheader("Retry-After") == "1"
+    finally:
+        release.set()
+        loop.shutdown(1.0)
+
+
+def test_turn_body_cap_is_131072(make_server):
+    loop = fast_loop()
+    server, _ = make_server(turn_loop=loop)
+
+    connection = http.client.HTTPConnection(server.host, server.port, timeout=2.0)
+    try:
+        connection.putrequest("POST", "/turn")
+        connection.putheader("Content-Length", "200000")
+        connection.putheader(TOKEN_HEADER, TOKEN)
+        connection.endheaders()  # headers only; the body is never sent
+        response = connection.getresponse()
+        body = json.loads(response.read())
+    finally:
+        connection.close()
+
+    assert response.status == 413
+    assert body["error"] == "request_too_large"
+    assert body["limit"] == 131072
+    # Refused before admission: the loop never saw a turn.
+    assert loop.status_fields()["turns_total"] == 0
+
+
+def test_turn_bad_request_names_the_field_not_the_value(make_server):
+    server, _ = make_server(turn_loop=fast_loop())
+    secret = "SECRET-PROMPT-9f3"
+
+    connection = http.client.HTTPConnection(server.host, server.port, timeout=2.0)
+    try:
+        connection.request(
+            "POST",
+            "/turn",
+            body=json.dumps({"prompt": secret, "max_tokens": 0}).encode("utf-8"),
+            headers={TOKEN_HEADER: TOKEN, "Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        raw = response.read()
+        body = json.loads(raw)
+    finally:
+        connection.close()
+
+    assert response.status == 400
+    assert body["error"] == "turn_bad_request"
+    assert "max_tokens" in body["detail"]
+    assert secret not in raw.decode("utf-8")
+
+
+def test_turn_unknown_id_404(make_server):
+    server, _ = make_server(turn_loop=fast_loop())
+
+    response, body = send_json(server, "/turn/never-seen", method="GET")
+    assert response.status == 404
+    assert body["error"] == "unknown_request_id"
+
+    # Exactly one id segment: an empty id or a deeper path is not a route.
+    for path in ("/turn/", "/turn/a/b"):
+        response, body = send_json(server, path, method="GET")
+        assert response.status == 404
+        assert body["error"] == "not_found"
+
+
+def test_turn_poll_returns_the_job_document(make_server):
+    release = threading.Event()
+    loop = blocking_loop(release)
+    server, _ = make_server(turn_loop=loop)
+    try:
+        _, admitted = send_json(server, "/turn", {"prompt": "x"})
+
+        response, body = send_json(
+            server, f"/turn/{admitted['request_id']}", method="GET"
+        )
+
+        assert response.status == 200
+        assert body["request_id"] == admitted["request_id"]
+        assert body["state"] == "running"
+    finally:
+        release.set()
+        loop.shutdown(1.0)
+
+
+def test_turn_wrong_method_405(make_server):
+    server, _ = make_server(turn_loop=fast_loop())
+
+    response, body = send_json(server, "/turn", method="GET")
+    assert response.status == 405
+    assert body["allow"] == "POST"
+
+    response, body = send_json(server, "/turn/abc", method="POST")
+    assert response.status == 405
+    assert body["allow"] == "GET, HEAD"
+
+    response, body = send_json(server, "/cancel", method="GET")
+    assert response.status == 405
+    assert body["allow"] == "POST"
+
+
+def test_cancel_returns_202_then_409(make_server):
+    started = threading.Event()
+    loop = cooperative_loop(started)
+    server, _ = make_server(turn_loop=loop)
+    try:
+        _, admitted = send_json(server, "/turn", {"prompt": "x"})
+        assert started.wait(2.0)
+
+        response, body = send_json(
+            server, "/cancel", {"request_id": admitted["request_id"]}
+        )
+        assert response.status == 202
+        assert body["ok"] is True
+        assert body["request_id"] == admitted["request_id"]
+        assert body["state"] == "cancelling"
+
+        final = wait_for(
+            lambda: (loop.poll(admitted["request_id"]) or {}).get("state")
+            == "cancelled"
+        )
+        assert final
+
+        response, body = send_json(
+            server, "/cancel", {"request_id": admitted["request_id"]}
+        )
+        assert response.status == 409
+        assert body["error"] == "turn_not_running"
+        assert body["state"] == "cancelled"
+    finally:
+        loop.shutdown(1.0)
+
+
+def test_cancel_unknown_id_404_and_bad_body_400(make_server):
+    server, _ = make_server(turn_loop=fast_loop())
+
+    response, body = send_json(server, "/cancel", {"request_id": "never-seen"})
+    assert response.status == 404
+    assert body["error"] == "unknown_request_id"
+
+    for payload in ({}, {"request_id": ""}, {"request_id": "has space"}, {"id": "x"}):
+        response, body = send_json(server, "/cancel", payload)
+        assert response.status == 400
+        assert body["error"] == "turn_bad_request"
+
+
+def test_turn_unavailable_without_a_loop(make_server):
+    server, _ = make_server()
+
+    response, body = send_json(server, "/turn", {"prompt": "hi"})
+
+    assert response.status == 503
+    assert body["error"] == "turn_unavailable"
+
+
+def test_status_merges_turn_counters(make_server):
+    loop = fast_loop()
+    server, _ = make_server(turn_loop=loop)
+
+    send_json(server, "/turn", {"prompt": "count me", "wait_ms": 2000})
+
+    code, body = request(server.base_url, "/status", token=TOKEN)
+
+    assert code == 200
+    assert body["turn_state"] == "idle"
+    assert body["turns_total"] == 1
+    assert body["turns_completed"] == 1
+    for field in (
+        "turn_active_request_id",
+        "turn_active_age_s",
+        "turn_shutting_down",
+        "turns_cancelled",
+        "turns_failed",
+        "turns_timed_out",
+        "turns_quarantined",
+        "turns_replayed",
+        "turns_rejected",
+        "turns_late_after_quarantine",
+        "turn_last_error_kind",
+        "turn_retained_results",
+        "turn_timeout_s",
+        "turn_timeout_grace_s",
+    ):
+        assert field in body, f"/status missing {field!r}"
+
+
+def test_health_stays_token_free_and_turn_blind_during_a_turn(make_server):
+    release = threading.Event()
+    loop = blocking_loop(release)
+    server, _ = make_server(turn_loop=loop)
+    try:
+        _, admitted = send_json(server, "/turn", {"prompt": "SECRET-PROMPT"})
+
+        # No token, no turn detail, and still answerable while a turn runs.
+        code, health = request(server.base_url, "/health")
+        assert code == 200
+        assert health["ok"] is True
+        assert "turns_total" not in health
+        assert not any(key.startswith("turn_") for key in health)
+        assert "SECRET-PROMPT" not in json.dumps(health)
+        assert admitted["request_id"] not in json.dumps(health)
+
+        code, status = request(server.base_url, "/status", token=TOKEN)
+        assert code == 200
+        assert status["turn_state"] == "running"
+        assert status["turn_active_request_id"] == admitted["request_id"]
+        # The prompt never reaches the status surface.
+        assert "SECRET-PROMPT" not in json.dumps(status)
+    finally:
+        release.set()
+        loop.shutdown(1.0)
+
+
+def test_shutdown_still_answers_during_a_running_turn(make_server):
+    release = threading.Event()
+    loop = blocking_loop(release)
+    server, calls = make_server(turn_loop=loop)
+    try:
+        send_json(server, "/turn", {"prompt": "x"})
+
+        code, body = request(
+            server.base_url, "/shutdown", method="POST", token=TOKEN
+        )
+
+        assert code == 200
+        assert body["ok"] is True
+        assert wait_for(lambda: len(calls) == 1)
+    finally:
+        release.set()
+        loop.shutdown(1.0)

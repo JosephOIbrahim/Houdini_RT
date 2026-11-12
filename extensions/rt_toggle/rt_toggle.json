@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "default": "houdini_rt",
+  "targets": {
+    "houdini_rt": {
+      "home": "../..",
+      "python_version": "3.14",
+      "site_packages": "../../Lib/site-packages",
+      "entry_point": null,
+      "env": {},
+      "allow_pure_python_only": false
+    }
+  }
+}

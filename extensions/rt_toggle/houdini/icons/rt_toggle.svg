@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="rt-toggle-title">
+  <title id="rt-toggle-title">RT Toggle</title>
+  <rect x="2.5" y="2.5" width="27" height="27" rx="6" fill="#0B0B0B" stroke="#3A3A38" stroke-width="1"/>
+  <circle cx="16" cy="17.5" r="6.5" fill="none" stroke="#E0A63A" stroke-width="2.4"/>
+  <line x1="16" y1="6.5" x2="16" y2="12" stroke="#E0A63A" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

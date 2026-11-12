@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="rt-turn-cancel-title">
+  <title id="rt-turn-cancel-title">RT Turn Cancel</title>
+  <rect x="2.5" y="2.5" width="27" height="27" rx="6" fill="#0B0B0B" stroke="#3A3A38" stroke-width="1"/>
+  <rect x="11" y="11" width="10" height="10" rx="1.5" fill="#E0A63A"/>
+</svg>

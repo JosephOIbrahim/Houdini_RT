@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    RT Toggle — pane tab type menu supplement for Houdini 22.0.429.
+
+    This is a SUPPLEMENT, not a copy of $HFS/houdini/PaneTabTypeMenu.xml.
+    Houdini loads the factory file first and then applies same-named files
+    found later on $HOUDINI_MENU_PATH (by default $HOUDINI_USER_PREF_DIR),
+    so only the new item is declared here.
+
+    The id must match the "name" of the interface defined in rt_panel.pypanel
+    exactly: <interface name="RT_Toggle">  ->  pythonpanel::RT_Toggle
+-->
+<menuDocument>
+    <menu>
+        <actionItem id="pythonpanel::RT_Toggle">
+            <label>RT Toggle</label>
+            <insertAfter>pythonpanel::log_viewer</insertAfter>
+        </actionItem>
+    </menu>
+</menuDocument>

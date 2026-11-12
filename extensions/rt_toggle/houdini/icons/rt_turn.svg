@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="rt-turn-title">
+  <title id="rt-turn-title">RT Turn</title>
+  <rect x="2.5" y="2.5" width="27" height="27" rx="6" fill="#0B0B0B" stroke="#3A3A38" stroke-width="1"/>
+  <path d="M12 9.5 L23 16 L12 22.5 Z" fill="#E0A63A"/>
+</svg>

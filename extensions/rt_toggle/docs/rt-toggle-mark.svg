@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 180" width="720" height="180" role="img" aria-labelledby="mark-title mark-desc">
+  <title id="mark-title">RT Toggle</title>
+  <desc id="mark-desc">A typographic RT wordmark on a black field with one amber rule and three split-flap tiles.</desc>
+  <rect width="720" height="180" rx="10" fill="#0B0B0B"/>
+  <rect x="56" y="46" width="3" height="88" fill="#E0A63A"/>
+  <text x="86" y="112" fill="#F2F0EC" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="76" font-weight="600" letter-spacing="-3">RT</text>
+  <text x="88" y="142" fill="#918D87" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13" letter-spacing="7">TOGGLE</text>
+  <g fill="none" stroke="#3A3A38" stroke-width="1.2">
+    <rect x="500" y="48" width="44" height="56" rx="3"/>
+    <rect x="552" y="48" width="44" height="56" rx="3"/>
+    <rect x="604" y="48" width="44" height="56" rx="3"/>
+  </g>
+  <text x="500" y="36" fill="#E0A63A" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10" letter-spacing="3">RUNTIME</text>
+  <line x1="500" y1="126" x2="648" y2="126" stroke="#E0A63A" stroke-width="1"/>
+  <text x="500" y="146" fill="#918D87" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="10" letter-spacing="2">3.13 / 3.14</text>
+</svg>

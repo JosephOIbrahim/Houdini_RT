@@ -2,8 +2,11 @@
 
 Six checks a human can run in Houdini 22.0.429 after following `INSTALL.md`.
 
-**No check in this file has been run.** No Houdini session and no hython session
-was launched by the packaging agent. Every result below is NOT RUN.
+**Results status (2026-11-11).** Checks 1–5 were exercised in hython 22.0.429
+(CPython 3.13.10, isolated preferences, no scene loaded or saved); GUI-only
+steps are marked in each result. Check 6 (uninstall) has not been run. The
+original packaging pass ran none of these; the results below are from the later
+hython pass.
 
 Run each check in the Houdini Python Shell (main application thread) unless the
 step says otherwise. Names used throughout:
@@ -58,7 +61,9 @@ Fail: `None` for the interface means the `.pypanel` was not found in
 `%PREF%\python_panels` or its internal name differs. A traceback on open means
 the panel script failed; read `tab.activeInterfaceScriptErrors()`.
 
-Result: **NOT RUN**
+Result (2026-11-11, hython 22.0.429): **PASS (install) / GUI-ONLY (render)**.
+`installFile` installed the interface and `interfaceByName("RT_Toggle")`
+returned a `PythonPanelInterface`; the pane itself was not drawn.
 
 ---
 
@@ -124,7 +129,8 @@ means something put `%HOUDINI_RT_ROOT%\Lib\site-packages` on
 runtime targets configured` means the runtime config is missing; fix the config,
 not the guard.
 
-Result: **NOT RUN**
+Result: **PASS** — `probe()["compatibility"]["safe"]` was false with 104 cp314
+blockers; `activate()` returned `False / off / False`; `cp314_modules: []`.
 
 ---
 
@@ -184,7 +190,9 @@ Fail: a safe probe with the default false means the strict default was lost. A
 refusal with true means the config flag is not reaching the compatibility check.
 Check that the scratch folder really contains no `.pyd` or `.so` files.
 
-Result: **NOT RUN**
+Result: **PASS** — the strict default refused the cp314 target (Check 2), and a
+scratch pure-Python target with the config opt-in activated to ON and
+deactivated to OFF (Check E / `RUN.md`).
 
 ---
 
@@ -222,7 +230,9 @@ copy at `%PREF%\toolbar\rt_shelf.shelf` and `rt_shelf.py`. A status line reading
 "rt_shelf.py not found" means the bootstrap could not resolve its module; keep
 both files in the same folder or set `RT_TOGGLE_ROOT`.
 
-Result: **NOT RUN**
+Result: **PASS (registration and simulated click) / GUI-ONLY (click, status
+bar)** — `RT` and `rt_toggle` registered; executing the tool's CDATA produced one
+`HoudiniRT: OFF - refused: ...` line.
 
 ---
 
@@ -263,7 +273,11 @@ Fail: no entry means the supplement was not found on `HOUDINI_MENU_PATH`, or the
 XML did not parse. A duplicate entry means the interface was also added through
 the Python Panel Editor's menu definition; remove it there.
 
-Result: **NOT RUN**
+Result: **PASS (file, interface, one item, anchor) / GUI-ONLY (menu render, gear
+menu)** — exactly one `pythonpanel::RT_Toggle`, anchor
+`pythonpanel::log_viewer`, interface installed at startup. Note:
+`hou.pypanel.menuInterfaces()` included `RT_Toggle`; whether the gear menu shows
+it as a second entry needs the GUI.
 
 ---
 
@@ -312,4 +326,4 @@ A remaining `PYTHONPATH` entry means the package JSON is still in a scanned
 `packages` directory (`%PREF%\packages`, `$HSITE\houdini22.0\packages`,
 `$HOUDINI_PACKAGE_DIR`, or `$HFS\packages`).
 
-Result: **NOT RUN**
+Result: **NOT RUN** — uninstall was not executed.

@@ -87,6 +87,37 @@ the plain-CPython contract; they do **not** prove any Houdini behaviour. Per the
 verification brief, `verification/MATRIX.md` keeps every Houdini row at
 `not_run`/`proposed`.
 
+## Houdini 22.0.429 hython run (2026-11-11)
+
+Environment: hython 22.0.429, CPython 3.13.10, isolated preferences
+(`HOUDINI_USER_PREF_DIR` under `%TEMP%`), `HOUDINI_PACKAGE_SKIP=1`,
+`HOUDINI_TOOLBAR_PATH` pointing at the extension's `houdini` folder where the
+check needed it. No scene was loaded or saved.
+
+| Check | Result | Evidence |
+|---|---|---|
+| A — panel installs | **PASS (install) / GUI-ONLY (render)** | `installFile` ok; `interfaceByName("RT_Toggle")` returned `<hou.PythonPanelInterface of RT_Toggle>` and the interface is in `hou.pypanel.interfaces()`. The pane was not drawn. |
+| B — cp314 refused | **PASS (probe/refusal) / GUI-ONLY (button press)** | `probe()["compatibility"]["safe"]` false; the blocker names 104 cp314 modules; `activate()` returned `False / off / False`; `sys.modules` held no module under the HoudiniRT site-packages. |
+| C — shelf | **PASS (XSD, registration, script) / GUI-ONLY (click)** | `lxml` XSD validation `True`, 0 errors; `RT` in `hou.shelves.shelves()`, `rt_toggle` in `hou.shelves.tools()`; executing the tool CDATA produced one `HoudiniRT: OFF - refused: ...` line. |
+| D — node | **PASS (build, callback function) / GUI-ONLY (event dispatch)** | `/obj/RT_TOGGLE` built; `enable.set(True)` did not dispatch the callback in hython (0 entries), and a minimal control also did not fire, so this is a hython limitation. Calling `toggle_callback({...})` directly wrote `REFUSED \| ...` and reverted `enable` to 0. |
+| E — state + restart | **PASS** | Five keys with an ISO timestamp; a fresh process saw `active: true` with the path absent and `status()` = `error`; toggle → `on`; deactivate → `off`, `added_paths: []`. |
+| F — uninstall | **NOT RUN** | Uninstall was not executed. The PaneTabTypeMenu entry was checked as `INSTALL_CHECKS.md` Check 5: exactly one `pythonpanel::RT_Toggle`, anchor `pythonpanel::log_viewer`, interface installed; the menu render is **GUI-ONLY**. |
+
+Check E state file sample (scratch `pure-demo` target, opt-in true):
+
+```json
+{
+  "active": true,
+  "added_paths": ["%TEMP%\\rt-check-ef\\pure-target\\site-packages"],
+  "env_backup": {},
+  "target": "pure-demo",
+  "updated_at": "2026-11-11T23:55:25Z"
+}
+```
+
+After the fresh-process toggle and deactivate: `active: false`, `added_paths: []`,
+`status()` `off`.
+
 ## What skips without Houdini
 
 Nothing in the suite requires Houdini or a GUI:
@@ -99,7 +130,7 @@ Nothing in the suite requires Houdini or a GUI:
   `PyQt*`).
 - `fake_hou` supplies `hou` for the node module; no real Houdini import occurs.
 
-## Houdini 22.0.429 live checks still needed
+## Houdini 22.0.429 live checks (hython results above; GUI steps marked)
 
 `verification/INSTALL_CHECKS.md` owns the six install/uninstall checks. The
 contract-specific checks below are the ones the automated suite cannot settle.
@@ -121,6 +152,9 @@ print(hou.pypanel.interfaceByName("RT_Toggle"))  # expect a PythonPanelInterface
 Then open **New Pane Tab Type > RT Toggle**. Expect the panel to draw its OFF
 state with no traceback. A traceback means the panel script failed; inspect
 `tab.activeInterfaceScriptErrors()`.
+
+**Result (2026-11-11, hython 22.0.429):** install and interface lookup **PASS**;
+the pane render is **GUI-ONLY**.
 
 ### Check B — The cp314 target is refused
 
@@ -146,6 +180,10 @@ bad = [n for n, m in list(sys.modules.items())
 print(bad)                              # expect []
 ```
 
+**Result:** probe and refusal **PASS** (`False / off / False`, 104 cp314
+blockers, `cp314_modules: []`); the panel and shelf button presses are
+**GUI-ONLY**.
+
 ### Check C — The shelf appears and reports
 
 Install `houdini/rt_shelf.shelf` and `houdini/rt_shelf.py` into
@@ -160,6 +198,11 @@ print(hou.shelves.tool("rt_toggle"))          # expect a hou.Tool, not None
 Click **RT Toggle** in the shelf bar. Expect exactly one `HoudiniRT:` status
 line and a status-bar message; with the default config it reports the Check B
 refusal.
+
+**Result:** XSD validation **PASS** (`True`, 0 errors); registration **PASS**
+(`RT`, `rt_toggle`, `<hou.Tool 'rt_toggle'>`); executing the tool's CDATA
+produced one `HoudiniRT: OFF - refused: ...` line. The GUI click and status-bar
+message are **GUI-ONLY**.
 
 ### Check D — The node callback fires
 
@@ -177,6 +220,14 @@ and no traceback. This also tests the open question noted in `rt_node.py`:
 whether a programmatic `Parm.set()` re-enters the callback synchronously. If the
 status parm does not change, record whether the callback ran once, twice, or not
 at all.
+
+**Result:** build **PASS** (`/obj/RT_TOGGLE`). In hython, `enable.set(True)` did
+**not** dispatch the callback (0 entries); a minimal control parm with
+`script_callback='print("CB_FIRED")'` also did not fire, so this is a hython
+limitation, not a wiring fault. Calling `rt_node.toggle_callback({"node": n,
+"parm": p})` directly wrote `REFUSED | ... (104 total) ...`, reverted `enable`
+from 1 to 0, and left `rt_status` locked. The GUI event path and the
+`_TOGGLE_IN_PROGRESS` re-entrancy question are **GUI-ONLY**.
 
 ### Check E — The state file and restart behaviour
 
@@ -203,6 +254,13 @@ not survive the restart. A subsequent toggle should re-activate cleanly and end
 at ON. If status returns ON immediately after a restart, the state machine is
 claiming paths that are not on `sys.path`.
 
+**Result:** **PASS.** A scratch pure-Python target (`pure-demo`, Python 3.14,
+opt-in true) activated to `on`; the state file held the five keys with
+`updated_at: 2026-11-11T23:55:25Z`. A fresh hython process saw `active: true`
+with the path absent and `status()` = `error`; `toggle()` returned `on`; and
+`deactivate()` returned `off` with `added_paths: []`. See the evidence table
+above.
+
 ### Check F — Uninstall leaves no trace
 
 Follow `verification/INSTALL_CHECKS.md` Check 6. Expect
@@ -210,6 +268,10 @@ Follow `verification/INSTALL_CHECKS.md` Check 6. Expect
 `hou.shelves.tool("rt_toggle")` to return `None`, no `rt_toggle` entry in
 `PYTHONPATH`, and no RT Toggle menu entry. Deactivate before uninstalling so the
 recorded `sys.path` entries are removed in the same session.
+
+**Result:** **NOT RUN.** The PaneTabTypeMenu entry was checked under
+`INSTALL_CHECKS.md` Check 5 (structural pass; menu render GUI-only), not the
+uninstall path.
 
 ## First check a human should run
 

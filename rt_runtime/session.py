@@ -6,7 +6,8 @@ object and therefore the same lock, sys.path bookkeeping, and state file.
 
 Defaults, as required by the scaffold contract:
 
-* config: ``<scaffold root>/rt_toggle.json``
+* config: ``<scaffold root>/rt_toggle.json``, unless ``RT_TOGGLE_CONFIG``
+  names an explicit config file (useful for isolated verification runs)
 * state:  ``<scaffold root>/.rt_toggle_state.json``
 
 ``<scaffold root>`` is the ``rt_toggle`` extension folder that contains the
@@ -128,6 +129,10 @@ def get_adapter(
     config = (
         _DEFAULT_CONFIG_PATH if config_path is None else _absolute(config_path)
     )
+    if config_path is None:
+        override = os.environ.get("RT_TOGGLE_CONFIG", "").strip()
+        if override:
+            config = _absolute(override)
     state = (
         _absolute(state_path)
         if state_path is not None

@@ -15,7 +15,12 @@ import pytest
 
 from rt_runtime.sidecar.transport import ControlServer, write_token_file
 from rt_runtime.sidecar.turn_loop import TurnLoop
-from rt_runtime.turn_control import TERMINAL_TURN_STATES, TurnControl, TurnPoller
+from rt_runtime.turn_control import (
+    TERMINAL_TURN_STATES,
+    TurnControl,
+    TurnPoller,
+    submit_turn,
+)
 from rt_runtime.adapter import RuntimeAdapter, RuntimeTarget
 
 TOKEN = "turn-control-token-0123456789"
@@ -264,3 +269,182 @@ def test_sidecar_adapter_returns_no_control_when_the_probe_is_not_ready(
     monkeypatch.setattr(adapter, "_supervisor", lambda policy: _Supervisor())
 
     assert adapter.turn_control() is None
+
+
+# ---------------------------------------------------------------------------
+# Transport contract and recovery
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_budget_and_raw_passthrough(tmp_path, monkeypatch):
+    from rt_runtime.sidecar import transport
+
+    control = TurnControl("http://127.0.0.1:1", tmp_path)
+    write_token_file(tmp_path / "token", TOKEN)
+    calls = []
+    sentinel = {"raw": True}
+
+    def fake_request(base_url, path, **kwargs):
+        calls.append({"base_url": base_url, "path": path, **kwargs})
+        return 418, sentinel
+
+    monkeypatch.setattr(transport, "request", fake_request)
+
+    assert control.status("abc") == (418, sentinel)
+    assert calls[-1]["timeout"] == 2.0
+
+    assert control.submit("x", wait_ms=4000) == (418, sentinel)
+    assert calls[-1]["timeout"] == 5.0
+    assert calls[-1]["body"] == {"prompt": "x", "wait_ms": 4000}
+
+
+def test_token_is_reread_after_a_valid_rotation(tmp_path, monkeypatch):
+    from rt_runtime.sidecar import transport
+
+    replacement = "replacement-token-0123456789"
+    control = TurnControl("http://127.0.0.1:1", tmp_path)
+    token_path = tmp_path / "token"
+    write_token_file(token_path, TOKEN)
+    seen_tokens = []
+
+    def fake_request(base_url, path, **kwargs):
+        seen_tokens.append(kwargs["token"])
+        return 200, {}
+
+    monkeypatch.setattr(transport, "request", fake_request)
+    control.status("one")
+    write_token_file(token_path, replacement)
+    control.status("two")
+
+    assert seen_tokens == [TOKEN, replacement]
+
+
+@pytest.mark.parametrize(
+    "state, expected_done",
+    [
+        ("running", False),
+        ("cancelling", False),
+        ("unknown", False),
+        ("complete", True),
+        ("cancelled", True),
+        ("error", True),
+        ("timeout", True),
+    ],
+)
+def test_poller_state_done_matrix(state, expected_done):
+    sentinel = {"text": "result"}
+    body = {"state": state, "result": sentinel}
+
+    class _Control:
+        def __init__(self):
+            self.calls = 0
+
+        def status(self, request_id, **kwargs):
+            self.calls += 1
+            return 200, dict(body)
+
+    control = _Control()
+    poller = TurnPoller(control, "request-id")
+
+    poller.refresh()
+
+    assert poller.done is expected_done
+    assert poller.document == body
+    assert poller.result is sentinel
+    assert poller.error == ""
+    poller.refresh()
+    assert control.calls == (1 if expected_done else 2)
+
+
+@pytest.mark.parametrize(
+    "outcome, expected_error, terminal",
+    [
+        (TimeoutError("timed out"), "TimeoutError: timed out", False),
+        ((500, {}), "HTTP 500", False),
+        ((401, {}), "HTTP 401: control token rejected", True),
+        ((403, {}), "HTTP 403: control token rejected", True),
+        (
+            (404, {}),
+            "turn not found (expired, or the sidecar restarted)",
+            True,
+        ),
+    ],
+)
+def test_poller_faults_follow_their_recoverability(outcome, expected_error, terminal):
+    class _Control:
+        def __init__(self):
+            self.calls = 0
+
+        def status(self, request_id, **kwargs):
+            self.calls += 1
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    control = _Control()
+    poller = TurnPoller(control, "request-id")
+
+    poller.refresh()
+
+    assert poller.done is terminal
+    assert poller.document == {}
+    assert poller.state == "error"
+    assert poller.error == expected_error
+
+    poller.refresh()
+    assert control.calls == (1 if terminal else 2)
+
+
+def test_transient_poll_failure_can_recover_to_cancelled():
+    class _Control:
+        def __init__(self):
+            self.calls = 0
+
+        def status(self, request_id, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("timed out")
+            return 200, {"state": "cancelled", "request_id": request_id}
+
+    control = _Control()
+    poller = TurnPoller(control, "request-id")
+
+    poller.refresh()
+    assert poller.done is False
+    assert poller.error == "TimeoutError: timed out"
+
+    poller.refresh()
+    assert poller.done is True
+    assert poller.state == "cancelled"
+    assert poller.error == ""
+
+
+def test_uncertain_submission_keeps_id_and_recovers_without_re_admission():
+    class _Control:
+        def __init__(self):
+            self.submissions = 0
+            self.request_id = None
+
+        def submit(self, prompt, **kwargs):
+            self.submissions += 1
+            self.request_id = kwargs["request_id"]
+            raise TimeoutError("response timed out")
+
+        def status(self, request_id, **kwargs):
+            assert request_id == self.request_id
+            return 200, {"state": "cancelled", "request_id": request_id}
+
+    control = _Control()
+
+    code, poller = submit_turn(control, "hello")
+
+    assert code is None
+    assert control.submissions == 1
+    assert poller.done is False
+    assert "submit uncertain: TimeoutError" in poller.error
+
+    poller.refresh()
+    assert poller.done is True
+    assert poller.state == "cancelled"
+    assert poller.error == ""
+    assert control.submissions == 1

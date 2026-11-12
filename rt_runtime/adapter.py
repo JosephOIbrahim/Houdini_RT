@@ -602,6 +602,22 @@ class RuntimeAdapter:
             return None
         return self._sidecar.turn_control()
 
+    def status_detail(self, *, check_health: bool = False) -> dict[str, Any]:
+        """Return operator-facing detail, including optional sidecar health.
+
+        Sidecar targets get the merged supervisor/status document. In-process
+        targets get the same outer state vocabulary without pretending to have
+        a sidecar health endpoint.
+        """
+        if self._sidecar is not None:
+            return self._sidecar.status_detail(check_health=check_health)
+        state = self.status()
+        return {
+            "target": self.target.name,
+            "runtime_state": getattr(state, "value", str(state)),
+            "probe": self.probe(),
+        }
+
     # -- state file ---------------------------------------------------------
 
     def _read_state(self) -> dict[str, Any]:

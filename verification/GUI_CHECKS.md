@@ -18,7 +18,7 @@ a pass.
 
 | # | Step | Verdict | Evidence (label text, screenshot name, or error) |
 |---|---|---|---|
-| 1 | Isolated environment starts | | |
+| 1 | Isolated environment starts with the sidecar test config | | |
 | 2 | Four surfaces install | | |
 | 3 | Panel draws with the TURN section | | |
 | 4 | In-process target shows UNSAFE (guard working) | | |
@@ -32,21 +32,39 @@ a pass.
 
 ## Setup
 
-### Step 1 — isolated environment starts
+### Step 1 — isolated environment starts with the sidecar test config
 
 Use a preferences folder that nothing else touches, so a daily config cannot
-explain a result either way.
+explain a result either way. Select `verification/rt_toggle_sidecar.json`
+explicitly: the shipped default target is in-process and is designed to refuse
+the cp314 tree, so without this override the ON and turn steps cannot pass.
+
+In PowerShell, after setting `HOUDINI_RT_ROOT` to the HoudiniRT root:
 
 ```powershell
 $env:HOUDINI_USER_PREF_DIR = "$env:TEMP\rt-gui-014\prefs22.0"
-$env:RT_TOGGLE_ROOT = "%HOUDINI_RT_ROOT%\extensions\rt_toggle"
+$env:RT_TOGGLE_ROOT = "$env:HOUDINI_RT_ROOT\extensions\rt_toggle"
+$env:RT_TOGGLE_CONFIG = "$env:HOUDINI_RT_ROOT\extensions\rt_toggle\verification\rt_toggle_sidecar.json"
 ```
 
 Do **not** set `HOUDINI_PACKAGE_SKIP` for this pass: the package JSON must be
-active so `rt_runtime` imports.
+active so `rt_runtime` imports. The override config has two targets: its default
+`houdini_rt_sidecar` runs the supervised 3.14 process, while
+`houdini_rt_in_process` is retained solely for the Step 4 refusal check.
 
 **Pass when:** Houdini starts with that preferences folder and a Python Shell
-can run `import hou; print(hou.applicationVersionString())` to `22.0.429`.
+can run:
+
+```python
+import hou
+from rt_runtime import get_adapter
+print(hou.applicationVersionString())
+print(get_adapter().target.name)
+```
+
+Expect `22.0.429` and `houdini_rt_sidecar`. At the end of the pass, close
+Houdini and clear the three environment variables so the scratch config and
+preferences do not affect normal work.
 
 ### Step 2 — four surfaces install
 
@@ -71,24 +89,34 @@ Open **New Pane Tab Type → RT Toggle**.
 **Pass when:** the panel shows the big **TURN ON** button, the STATUS / TARGET /
 PYTHON / ABI rows, and below them a **TURN** section with an empty prompt
 field, two buttons reading **Run turn (offline)** and **Cancel turn**, and the
-label **(idle)**. No traceback in the pane.
+label **(idle)**. TARGET reads `houdini_rt_sidecar`. No traceback in the pane.
 
 If something fails: inspect `tab.activeInterfaceScriptErrors()`.
 
-### Step 4 — in-process target shows UNSAFE
+### Step 4 — in-process target is refused
 
-Read the ABI row before touching anything.
+The sidecar target's ABI row should be safe: its launcher is 3.14. The guard's
+refusal applies to the separate in-process target, which must be checked
+explicitly in the Python Shell:
 
-**Pass when:** status reads **OFF** and the ABI row says **UNSAFE** with a
-blocker count naming cp314. This is the guard refusing the in-process target,
-not a fault; a panel that claims the cp314 tree is safe is the failure.
+```python
+from rt_runtime import get_adapter
+guard = get_adapter(target_name="houdini_rt_in_process")
+probe = guard.probe()
+print(probe["compatibility"])
+result = guard.activate()
+print(result.ok, result.state, result.changed)
+```
+
+**Pass when:** `probe["compatibility"]["safe"]` is false with cp314 blockers,
+and `activate()` returns `False`, `off`, `False`. The panel continues to target
+`houdini_rt_sidecar`. This is the guard working, not a failure of the toggle.
 
 ### Step 5 — runtime reaches ON; `/health` 200
 
 Press **TURN ON**. Then, in the Python Shell:
 
 ```python
-detail = hou.session  # placeholder to keep the shell open
 from rt_runtime import get_adapter
 d = get_adapter().status_detail(check_health=True)
 print(d["runtime_state"], d["health"])

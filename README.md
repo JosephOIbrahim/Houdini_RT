@@ -4,7 +4,7 @@
 
 # RT Toggle
 
-**Houdini 22 runtime on/off for HoudiniRT — v0.1.6**
+**Houdini 22 runtime on/off for HoudiniRT — v0.1.7**
 
 ## The answer first
 
@@ -17,7 +17,7 @@ it, refuses it, and runs it as a supervised sidecar instead.
 real `run_turn` returns complete. The in-process guard correctly refuses the
 cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
 
-**Tests:** 224 pass on Python 3.14; 207 pass with skips on 3.12.
+**Tests:** 277 pass on Python 3.14; 260 pass with skips on 3.12.
 
 ---
 
@@ -155,8 +155,13 @@ against that file's folder.
 
 Add `"mode": "sidecar"` plus a `sidecar` block to run the 3.14 process instead of
 touching `sys.path`. The block carries the launcher, host script, state folder,
-package precedence, timeouts and `entry_point`. See `DESIGN.md` for the full
-field table.
+package precedence, timeouts and `entry_point`. A complete two-target example is
+`verification/rt_toggle_sidecar.json`: its default is the sidecar target, and
+its second target exists to prove the in-process refusal.
+
+For an isolated check, point `RT_TOGGLE_CONFIG` at that file before launching
+Houdini. `get_adapter()` then uses it, with state beside the config, rather than
+editing the extension's default target.
 
 **Package precedence.** `runtime-first` is the default and wins imports. Base-first
 is available only with `"allow_degraded_base_first": true`, and every result is
@@ -200,18 +205,18 @@ stdlib APIs may still fail.
 py -3.12 -m pytest tests -q -p no:cacheprovider
 ```
 
-- **Python 3.12 (local, Windows):** 222 passed, 18 skipped (3.14-only sidecar
+- **Python 3.12 (local, Windows):** 260 passed, 18 skipped (3.14-only sidecar
   lifecycle tests, plus the POSIX permission test).
-- **Python 3.14 (local, Windows):** 239 passed, 1 skipped (the POSIX
+- **Python 3.14 (local, Windows):** 277 passed, 1 skipped (the POSIX
   permission test).
-- **CI, Ubuntu:** 223 passed, 17 skipped on both 3.12 and 3.13 — the POSIX
-  permission test runs there instead of skipping.
-- **CI, Windows:** 237 passed, 3 skipped on 3.14 — `synapse` is not installed on
-  the runner, so the two guarded host-turn tests skip as well as the POSIX one.
+- **Latest recorded CI before this change:** 230 passed, 17 skipped on Ubuntu
+  3.12 and 3.13; 244 passed, 3 skipped on Windows 3.14. Run `43301551119` at
+  `cfc81da`; all four jobs passed.
 
 The local and CI counts differ by host, not by code: local runs have `synapse`
-available, and Windows cannot exercise POSIX permission bits. CI figures are
-from run `43249796804` at `32480fa`; all four jobs passed.
+available, Ubuntu runs the POSIX permission test that Windows skips, and the
+Windows runner has no `synapse`. Current CI figures are recorded after the run
+at this release commit.
 
 The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`.
 
@@ -270,4 +275,4 @@ License: TBD. No license file is included; licensing is the owner's decision.
 
 ---
 
-*RT Toggle v0.1.6 · Myth and Logic*
+*RT Toggle v0.1.7 · Myth and Logic*

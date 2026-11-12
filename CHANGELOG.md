@@ -13,6 +13,38 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-12
+
+### Fixed
+
+- **Node toggle direction and state**: checked calls `activate()`, unchecked
+  calls `deactivate()`, and status/checkbox follow `result.state`. A stale
+  checkbox can no longer invert the operation or claim the wrong state.
+- **Transient poll failures no longer strand a running turn.** Transport
+  exceptions and 5xx responses keep the poller active and cancellable;
+  401/403/404 and terminal documents end it.
+- **Ambiguous submission responses no longer lose the request id.**
+  `submit_turn()` generates the id before the request, so polling and cancel
+  can recover after a response timeout without a second admission.
+- **Shelf/node polling respects its deadline.** Each refresh receives the
+  remaining budget and sleep is capped to it.
+- **Cancelling the shelf prompt no longer submits its text.**
+
+### Added
+
+- `RT_TOGGLE_CONFIG` config override and `verification/rt_toggle_sidecar.json`,
+  an isolated two-target config for GUI verification.
+- `RuntimeAdapter.status_detail()`, exposing sidecar health for operators.
+- Regression tests for the fixes above, including timeout budgeting, valid
+  token rereads, terminal-state latching, recoverable polling and submission.
+
+### Documentation
+
+- GUI checklist Step 1 selects the sidecar config explicitly; the in-process
+  refusal is checked against the separate target. It now has eleven steps.
+- INSTALL matches the package's `PYTHONPATH` and `RT_TOGGLE_ROOT` behavior;
+  README, RUN and HANDOFF carry measured current counts and release state.
+
 ## [0.1.6] - 2026-11-12
 
 ### Added

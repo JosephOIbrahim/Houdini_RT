@@ -33,7 +33,8 @@ There are two different files called `rt_toggle.json`:
   is the runtime target config read by `rt_runtime.session.get_adapter()`. It is
   owned by the runtime component and is read in place; it is not installed.
 - `%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\packages\rt_toggle.json`
-  is the Houdini package file installed in Step 1. It only sets `PYTHONPATH`.
+  is the Houdini package file installed in Step 1. It appends the extension root
+  to `PYTHONPATH` and sets `RT_TOGGLE_ROOT` to that same root for icon lookup.
 
 ---
 
@@ -64,7 +65,7 @@ Throughout this file, `%PREF%` means the value printed by
 
 ---
 
-## Step 1 of 6 — Copy the package file (PYTHONPATH)
+## Step 1 of 6 — Copy the package file (imports and icon root)
 
 Source: `%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini\packages\rt_toggle.json`
 
@@ -81,10 +82,11 @@ For the default preference directory that is:
 ```
 
 What the file does: it appends the extension root to `PYTHONPATH` at startup and
-nothing else. That is the folder that contains `rt_runtime`, so `import
-rt_runtime` works in Houdini's Python and the panel no longer shows "rt_runtime
-not on sys.path". It does not touch `HOUDINI_PATH`, `HOUDINI_TOOLBAR_PATH`, or
-any HoudiniRT site-packages directory.
+sets `RT_TOGGLE_ROOT` to that same root. That is the folder that contains
+`rt_runtime`, so `import rt_runtime` works in Houdini's Python and the panel no
+longer shows "rt_runtime not on sys.path". The second variable lets the shelf
+and panel resolve their SVG icons in `houdini/icons`. It does not touch
+`HOUDINI_PATH`, `HOUDINI_TOOLBAR_PATH`, or any HoudiniRT site-packages directory.
 
 The package carries no machine path. Its `value` is
 `"$HOUDINI_RT_ROOT/extensions/rt_toggle"`, so Houdini must know
@@ -201,8 +203,8 @@ HOUDINI_TOOLBAR_PATH = "%HOUDINI_RT_ROOT%/extensions/rt_toggle/houdini;&"
 ```
 
 `houdini.env` is read at startup only. The package JSON intentionally does not
-set this variable; keep environment additions out of the package so the package
-stays a single-purpose PYTHONPATH entry.
+set this variable: it owns imports and the icon root only, and does not alter
+Houdini's shelf search path.
 
 ---
 

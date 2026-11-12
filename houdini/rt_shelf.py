@@ -245,8 +245,10 @@ def _read_turn_prompt():
         value = hou.ui.readInput("HoudiniRT turn prompt", buttons=("OK", "Cancel"))
     except Exception:
         return ""
-    # readInput returns (button_index, text) on current builds.
+    # readInput returns (button_index, text) on current builds. Only OK submits.
     if isinstance(value, (tuple, list)) and len(value) >= 2:
+        if value[0] != 0:
+            return ""
         return str(value[1] or "").strip()
     return ""
 
@@ -257,9 +259,10 @@ def _poll_to_end(poller, deadline_s):
 
     end = time.monotonic() + max(0.0, float(deadline_s))
     while not poller.done and time.monotonic() < end:
-        poller.refresh()
+        remaining = max(0.0, end - time.monotonic())
+        poller.refresh(timeout=remaining)
         if not poller.done:
-            time.sleep(0.05)
+            time.sleep(min(0.05, max(0.0, end - time.monotonic())))
     return poller
 
 
@@ -316,31 +319,18 @@ def turn_from_shelf(prompt=None, wait_s=None):
         return None
 
     try:
-        code, body = control.submit(text, wait_ms=0)
-    except Exception:
-        detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
-        report_status(f"{TURN_PREFIX}: submit failed - {detail}", "error")
-        return None
-
-    body = body if isinstance(body, Mapping) else {}
-    if code not in (200, 202):
-        message = body.get("error") or body.get("message") or f"HTTP {code}"
-        report_status(f"{TURN_PREFIX}: rejected - {message}", "error")
-        return None
-
-    request_id = body.get("request_id")
-    if not request_id:
-        report_status(f"{TURN_PREFIX}: sidecar returned no request id", "error")
-        return None
-
-    try:
-        from rt_runtime.turn_control import TurnPoller
+        from rt_runtime.turn_control import submit_turn
     except Exception:
         report_status(f"{TURN_PREFIX}: rt_runtime.turn_control not importable", "error")
         return None
 
-    poller = TurnPoller(control, str(request_id))
-    poller.document = dict(body)
+    code, poller = submit_turn(control, text)
+    body = poller.document
+    if code not in (None, 200, 202):
+        message = body.get("error") or body.get("message") or f"HTTP {code}"
+        report_status(f"{TURN_PREFIX}: rejected - {message}", "error")
+        return None
+
     _ACTIVE_TURN["control"] = control
     _ACTIVE_TURN["poller"] = poller
 
@@ -353,7 +343,7 @@ def turn_from_shelf(prompt=None, wait_s=None):
     if poller.done:
         text, level = describe_turn(poller)
     else:
-        text = f"{TURN_PREFIX}: running {request_id} - use RT Turn Cancel to stop it"
+        text = f"{TURN_PREFIX}: running {poller.request_id} - use RT Turn Cancel to stop it"
         level = "message"
     report_status(text, level)
     return poller

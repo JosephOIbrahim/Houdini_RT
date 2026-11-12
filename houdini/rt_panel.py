@@ -706,15 +706,17 @@ class RT_TogglePanel(QtWidgets.QWidget):
             return
 
         try:
-            code, body = control.submit(prompt, wait_ms=0)
+            from rt_runtime.turn_control import submit_turn
         except Exception:
             self._set_turn_status(
-                "submit failed: " + _exc_text(), _STATUS_COLORS[STATE_ERROR]
+                "rt_runtime.turn_control is not importable on this runtime.",
+                _STATUS_COLORS[STATE_ERROR],
             )
             return
-        body = body if isinstance(body, dict) else {}
 
-        if code not in (200, 202):
+        code, poller = submit_turn(control, prompt)
+        body = poller.document
+        if code not in (None, 200, 202):
             message = _get(body, _ERROR_KEYS) or _get(body, _REASON_KEYS) or (
                 "HTTP %d" % code
             )
@@ -724,25 +726,8 @@ class RT_TogglePanel(QtWidgets.QWidget):
             )
             return
 
-        request_id = _get(body, ("request_id",))
-        if not request_id:
-            self._set_turn_status(
-                "Sidecar returned no request id.", _STATUS_COLORS[STATE_ERROR]
-            )
-            return
-
-        try:
-            from rt_runtime.turn_control import TurnPoller
-        except Exception:
-            self._set_turn_status(
-                "rt_runtime.turn_control is not importable on this runtime.",
-                _STATUS_COLORS[STATE_ERROR],
-            )
-            return
-
         self._turn_control = control
-        self._turn_poller = TurnPoller(control, str(request_id))
-        self._turn_poller.document = dict(body)
+        self._turn_poller = poller
         self._render_turn()
         if not self._turn_poller.done:
             self._ensure_turn_timer()

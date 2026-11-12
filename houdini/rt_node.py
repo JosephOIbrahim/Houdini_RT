@@ -273,11 +273,11 @@ def toggle_callback(kwargs):
     (docs:hom/locations.md#parameter_callback_scripts). ``kwargs["node"]`` is
     the node holding the parm and ``kwargs["parm"]`` is the parm itself.
 
-    The checkbox is treated as the *requested direction*: checked asks the
-    runtime to come on, unchecked asks it to go off. ``adapter.toggle()`` is
-    called either way (the fixed contract only offers ``toggle()``). On
-    REFUSED / ERROR the checkbox is put back where it was, so the UI does not
-    claim a state the runtime did not grant.
+    The checkbox is treated as the *requested direction*: checked calls
+    ``adapter.activate()``, unchecked calls ``adapter.deactivate()``. The
+    returned result's state, not the requested direction, determines the status
+    and checkbox. On REFUSED / ERROR the checkbox is put back where it was, so
+    the UI does not claim a state the runtime did not grant.
     """
     global _TOGGLE_IN_PROGRESS
 
@@ -312,7 +312,10 @@ def toggle_callback(kwargs):
 
         try:
             adapter = session.get_adapter()
-            result = adapter.toggle()
+            if requested_on:
+                result = adapter.activate()
+            else:
+                result = adapter.deactivate()
             ok = bool(result.ok)
             reason = _result_reason(result)
             detail = _result_detail(result)
@@ -324,7 +327,8 @@ def toggle_callback(kwargs):
             _refuse(node, parm, requested_on, STATUS_REFUSED, reason)
             return
 
-        token = STATUS_ON if requested_on else STATUS_OFF
+        token = _status_from_result(result)
+        _restore_enable(parm, token == STATUS_ON)
         _set_status(node, "{} | {}".format(token, detail))
     finally:
         _TOGGLE_IN_PROGRESS = False
@@ -370,28 +374,7 @@ def turn_callback(kwargs):
         return
 
     try:
-        code, body = control.submit(text, wait_ms=0)
-    except Exception as exc:
-        _set_parm_text(
-            node, TURN_STATUS_PARM, "ERROR | submit failed: {!r}".format(exc)
-        )
-        return
-
-    body = body if isinstance(body, dict) else {}
-    if code not in (200, 202):
-        message = body.get("error") or body.get("message") or "HTTP {}".format(code)
-        _set_parm_text(
-            node, TURN_STATUS_PARM, "ERROR | rejected: {}".format(message)
-        )
-        return
-
-    request_id = body.get("request_id")
-    if not request_id:
-        _set_parm_text(node, TURN_STATUS_PARM, "ERROR | no request id")
-        return
-
-    try:
-        from rt_runtime.turn_control import TurnPoller
+        from rt_runtime.turn_control import submit_turn
     except Exception as exc:
         _set_parm_text(
             node,
@@ -400,8 +383,15 @@ def turn_callback(kwargs):
         )
         return
 
-    poller = TurnPoller(control, str(request_id))
-    poller.document = dict(body)
+    code, poller = submit_turn(control, text)
+    body = poller.document
+    if code not in (None, 200, 202):
+        message = body.get("error") or body.get("message") or "HTTP {}".format(code)
+        _set_parm_text(
+            node, TURN_STATUS_PARM, "ERROR | rejected: {}".format(message)
+        )
+        return
+
     _ACTIVE_TURN["control"] = control
     _ACTIVE_TURN["poller"] = poller
 
@@ -449,9 +439,10 @@ def _poll_to_end(poller, deadline_s):
 
     end = time.monotonic() + max(0.0, float(deadline_s))
     while not poller.done and time.monotonic() < end:
-        poller.refresh()
+        remaining = max(0.0, end - time.monotonic())
+        poller.refresh(timeout=remaining)
         if not poller.done:
-            time.sleep(0.05)
+            time.sleep(min(0.05, max(0.0, end - time.monotonic())))
     return poller
 
 
@@ -532,6 +523,20 @@ def _set_parm_text(node, parm_name, text):
                 status_parm.lock(True)
             except Exception:
                 pass
+
+
+def _status_from_result(result):
+    """Read the result's state as one of the display tokens."""
+    state = getattr(result, "state", None)
+    value = getattr(state, "value", None)
+    if value is None:
+        value = getattr(state, "name", state)
+    text = str(value).upper()
+    if text == STATUS_ON:
+        return STATUS_ON
+    if text == STATUS_OFF:
+        return STATUS_OFF
+    return STATUS_ERROR
 
 
 def _result_reason(result):

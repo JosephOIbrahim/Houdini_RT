@@ -520,7 +520,9 @@ Concrete issues to resolve before any Houdini run:
 ### 11.1 Local checks run for this design
 
 These ran outside Houdini. The documented test host is CPython 3.12; the 3.14
-run is included because 3.14 is the target ABI.
+run is included because 3.14 is the target ABI. The figures below are the
+historical results for this design pass; current operator-facing counts live in
+`verification/RUN.md`, not in this table.
 
 | Check | Result |
 |---|---|

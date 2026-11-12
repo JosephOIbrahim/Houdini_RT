@@ -23,6 +23,7 @@ must not collapse 202 into failure: a running turn is a success.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,14 +93,19 @@ class TurnControl:
         max_tokens: int | None = None,
         wait_ms: int = 0,
         timeout: float | None = None,
+        request_id: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
         """Admit a turn. ``wait_ms=0`` returns 202 immediately.
 
-        Only keys the loop accepts are sent; unknown keys are rejected with 400.
+        A caller-supplied ``request_id`` lets the caller recover after an
+        ambiguous response timeout. Only keys the loop accepts are sent;
+        unknown keys are rejected with 400.
         """
         body: dict[str, Any] = {"prompt": str(prompt), "wait_ms": int(wait_ms)}
         if max_tokens is not None:
             body["max_tokens"] = int(max_tokens)
+        if request_id is not None:
+            body["request_id"] = str(request_id)
         return self._call(
             "/turn", method="POST", body=body, wait_ms=int(wait_ms), timeout=timeout
         )
@@ -151,15 +157,25 @@ class TurnPoller:
     def result(self) -> Any:
         return self.document.get("result")
 
-    def refresh(self) -> dict[str, Any]:
-        """Poll once. Never raises: transport and HTTP faults become ``error``."""
+    def refresh(self, *, timeout: float | None = None) -> dict[str, Any]:
+        """Poll once, optionally bounding the request by ``timeout`` seconds.
+
+        Never raises. Transport exceptions and 5xx responses are transient:
+        the request id and poller stay live so the turn can still be cancelled
+        and a later poll can recover. Only a terminal document, an evicted id,
+        or rejected credentials end the poller.
+        """
         if self._done:
             return self.document
         try:
-            code, body = self.control.status(self.request_id)
+            if timeout is None:
+                code, body = self.control.status(self.request_id)
+            else:
+                code, body = self.control.status(
+                    self.request_id, timeout=max(0.0, float(timeout))
+                )
         except Exception as exc:  # noqa: BLE001 - the UI must not see a socket
             self.error = f"{type(exc).__name__}: {exc}"
-            self._done = True
             return self.document
 
         if code == 200:
@@ -169,9 +185,38 @@ class TurnPoller:
             return self.document
         if code == 404:
             self.error = "turn not found (expired, or the sidecar restarted)"
+            self._done = True
         elif code in (401, 403):
             self.error = f"HTTP {code}: control token rejected"
+            self._done = True
         else:
+            # 5xx and other transient statuses: keep following the id.
             self.error = f"HTTP {code}"
-        self._done = True
         return self.document
+
+
+def submit_turn(
+    control: TurnControl, prompt: str, *, max_tokens: int | None = None
+) -> tuple[int | None, TurnPoller]:
+    """Generate an id, admit one turn, and always return a poller for it.
+
+    The id is chosen before the request, so a timeout between admission and the
+    response does not strand the turn: the poller can recover it with
+    ``GET /turn/<id>`` and the cancel controls still know where to send a stop.
+    Returns ``(http_status, poller)``; an exception during submission yields
+    ``(None, poller)`` with the error recorded and the poller left active.
+    """
+    request_id = uuid.uuid4().hex
+    try:
+        code, body = control.submit(
+            prompt, max_tokens=max_tokens, wait_ms=0, request_id=request_id
+        )
+    except Exception as exc:  # noqa: BLE001 - an uncertain admission is not fatal
+        poller = TurnPoller(control, request_id)
+        poller.error = f"submit uncertain: {type(exc).__name__}: {exc}"
+        return None, poller
+
+    body = dict(body) if isinstance(body, dict) else {}
+    poller = TurnPoller(control, str(body.get("request_id") or request_id))
+    poller.document = body
+    return code, poller

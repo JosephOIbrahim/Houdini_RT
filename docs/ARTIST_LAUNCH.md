@@ -12,11 +12,11 @@ build).
 
 | Level | Surface | What it gives | Status |
 |---|---|---|---|
-| 1 | Shelf strip | one click, always visible, custom SVG icons | tested (registration, icons) |
+| 1 | Shelf strip | one click, always visible, custom SVG icons | registration tested in hython; clicks and icon rendering unverified |
 | 2 | Viewer Tab menu | type `rt`, Enter; lists shelf tools | documented |
 | 3 | HUD handles | controls floating over the viewport, bound to node parms | documented |
 | 4 | Radial menu | direction instead of reading; 3D viewer and network editor only | documented |
-| 5 | Python Panel | full state, blockers and turn result; a pane, never the viewport | tested |
+| 5 | Python Panel | full state, blockers and turn result; a pane, never the viewport | install/interface lookup tested in hython; pane render unverified |
 
 ## 1. Shelf
 

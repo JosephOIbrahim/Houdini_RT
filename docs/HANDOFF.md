@@ -1,9 +1,7 @@
 # RT Toggle — session hand-off (2026-11-12)
 
-Latest main: **`v0.1.5`** release, tag on `e5f2111`. Published tags: `v0.1.5`,
-`v0.1.4`, `v0.1.3`, `v0.1.2`, `v0.1.1`, `v0.1.0`. Release asset
-`dist/houdini-rt-toggle-0.1.5.zip`, 60 members, 258,545 bytes, SHA-256
-`8b4a139467a2c25e1356b91215f8c4364587dd95720facb851fa0fbcbb9a102c`.
+Latest main: **`v0.1.7`** release commit, tagged `v0.1.7`. Published tags:
+`v0.1.7`, `v0.1.6`, `v0.1.5`, `v0.1.4`, `v0.1.3`, `v0.1.2`, `v0.1.1`, `v0.1.0`.
 Repo: `%HOUDINI_RT_ROOT%\extensions\rt_toggle`
 Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
 
@@ -78,28 +76,56 @@ Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
   it outlives one release; it now holds ten steps, the tenth being HUD handles
   with an optional Vulkan sub-check.
 
+## What v0.1.6 added
+
+- `houdini/rt_radial.py` builds the `RT` radial menu with Toggle (checked when
+  ON), Turn and Cancel. Six static tests; hython has no `hou.ui`, so GUI step 11
+  is the only way to exercise it.
+
+## What v0.1.7 added
+
+- **Directional node toggle**: checked calls `activate()`, unchecked calls
+  `deactivate()`, and status comes from `result.state`, not the requested
+  direction. A stale checkbox can no longer invert the operation or lie.
+- **Recoverable polling**: transport errors and 5xx keep the request id and
+  poller active; 401/403/404 and terminal documents end it. Cancel remains
+  available through a transient fault.
+- **Recoverable submission**: `submit_turn()` generates the request id before
+  admission, so a response timeout can be recovered by polling rather than
+  resubmitting into a 429.
+- **Bounded shelf/node polls**: each refresh receives the remaining deadline,
+  and sleep is capped to it.
+- **Shelf Cancel fix**: a cancelled input dialog no longer submits its text.
+- **Isolated GUI config**: `RT_TOGGLE_CONFIG` selects
+  `verification/rt_toggle_sidecar.json` without editing the default target;
+  `RuntimeAdapter.status_detail()` now exposes the health check publicly.
+- Regression tests for each fix; install/checklist/docs corrections follow the
+  actual package and config behavior.
+
 ## Counts
 
 ```
-local Windows   3.12: 223 passed, 18 skipped
-local Windows   3.14: 240 passed,  1 skipped
-CI Ubuntu       3.12: 224 passed, 17 skipped
-CI Ubuntu       3.13: 224 passed, 17 skipped
-CI Windows      3.14: 238 passed,  3 skipped
+local Windows   3.12: 260 passed, 18 skipped
+local Windows   3.14: 277 passed,  1 skipped
+CI Ubuntu       3.12: 230 passed, 17 skipped   (last recorded before 0.1.7)
+CI Ubuntu       3.13: 230 passed, 17 skipped
+CI Windows      3.14: 244 passed,  3 skipped
 ```
 
-CI run `43291688245` at `e5f2111` (tag) and `43291683130` (main) — all four jobs
-success in both. The local/CI gap keeps its two causes: Ubuntu runs the POSIX
-permission test that Windows skips, and the Windows runner has no `synapse`, so
-the two guarded host-turn tests skip there. Each leg is 1 higher than at
-`32480fa`: the icon contract test.
+The last recorded CI figures are from run `43301551119` at `cfc81da`. Current
+release CI figures follow the run at the release commit. The local/CI gap keeps
+its two causes: Ubuntu runs the POSIX permission test that Windows skips, and
+the Windows runner has no `synapse`, so the two guarded host-turn tests skip
+there.
 
 ## Key paths
 
 - Adapter: `rt_runtime/adapter.py`, `rt_runtime/sidecar_adapter.py`
 - Host/supervisor/transport/turn loop:
   `rt_runtime/sidecar/{host_stub,lifecycle,transport,turn_loop}.py`
-- Tests: `tests/` (240 on 3.14, 223 + skips on 3.12 locally)
+- Tests: `tests/` (277 on 3.14, 260 + skips on 3.12 locally)
+- GUI config: `verification/rt_toggle_sidecar.json`, selected with
+  `RT_TOGGLE_CONFIG`
 - Icons: `houdini/icons/{rt_toggle,rt_turn,rt_turn_cancel}.svg`
 - Artist launch: `docs/ARTIST_LAUNCH.md`
 - GUI checks: `verification/GUI_CHECKS.md`
@@ -126,11 +152,13 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
 
 ## Open items
 
-1. **Run the ten GUI steps.** `verification/GUI_CHECKS.md` is the single list:
-   panel draw and guard, sidecar ON, offline turn with a responsive UI, cancel,
-   the two shelf tools, the node parms, and HUD handles. None has been clicked
-   in Houdini. The client, poller and server are tested over loopback and the
-   wiring is checked statically; the clicks are the gap.
+1. **Run the eleven GUI steps.** `verification/GUI_CHECKS.md` is the single
+   list: panel draw and guard, sidecar ON, offline turn with a responsive UI,
+   cancel, the two shelf tools, the node parms, HUD handles, and the radial
+   menu. Step 1 selects the sidecar test config with `RT_TOGGLE_CONFIG`; none of
+   the controls has been clicked in Houdini. The client, poller and server are
+   tested over loopback and the wiring is checked statically; the clicks are the
+   gap.
 2. **Icon rendering and Vulkan.** The icon strings expand to real files; how
    they draw at shelf size and in the pane tab is unverified. HUD handles over
    the Vulkan viewport are undocumented in the reference corpus and must be
@@ -143,7 +171,7 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
    per-state `model_access.json` in sync with whichever endpoint is in use. The
    default local proxy is `http://127.0.0.1:11434/v1/messages`; the real
    endpoint is `https://api.anthropic.com/v1/messages`.
-6. **Release.** `v0.1.5` is the published release; `v0.1.0`–`v0.1.4` remain
+6. **Release.** `v0.1.7` is the published release; `v0.1.0`–`v0.1.6` remain
    prior tags.
 7. **Licensing.** TBD; no license file is included.
 

@@ -197,12 +197,10 @@ def test_panel_script_wires_the_turn_control():
         text = _read(path)
         if "turn_control" not in text:
             problems.append(f"{path.name}: script never calls adapter.turn_control()")
-        if "TurnPoller" not in text:
+        if "submit_turn(" not in text:
+            problems.append(f"{path.name}: script never uses submit_turn()")
+        if "poller.refresh(" not in text:
             problems.append(f"{path.name}: script never polls a submitted turn")
-        if "wait_ms=0" not in text:
-            problems.append(
-                f"{path.name}: submit must use wait_ms=0 and poll, not block"
-            )
         if ".cancel(" not in text:
             problems.append(f"{path.name}: script has no cancel path")
     assert not problems, "Python panel turn-control contract violations:\n  " + "\n  ".join(problems)

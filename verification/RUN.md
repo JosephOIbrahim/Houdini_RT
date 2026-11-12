@@ -78,28 +78,27 @@ py -3.12 -m pytest "tests/test_state_contract.py::test_state_json_schema" -q
 
 ```text
 local, Windows (py -3.12 -m pytest tests -q)
-207 passed, 18 skipped    (2026-11-12, CPython 3.12.10, no Houdini)
+260 passed, 18 skipped, 18 subtests passed   (2026-11-12, CPython 3.12.10, no Houdini)
 local, Windows (py -3.14 -m pytest tests -q)
-224 passed, 1 skipped     (2026-11-12, CPython 3.14.2, no Houdini)
+277 passed, 1 skipped                         (2026-11-12, CPython 3.14.2, no Houdini)
 
-CI, ubuntu-latest (Python 3.12 and 3.13)          run 43236109677, d3e2bc8
-208 passed, 17 skipped, 18 subtests passed
-CI, windows-latest (Python 3.14, Windows)        run 43236109677, d3e2bc8
-222 passed, 3 skipped, 18 subtests passed
+Latest recorded CI before this change          run 43301551119, cfc81da
+CI, ubuntu-latest (Python 3.12 and 3.13)
+230 passed, 17 skipped, 18 subtests passed
+CI, windows-latest (Python 3.14)
+244 passed, 3 skipped, 18 subtests passed
 ```
 
 The local and CI counts differ by host, not by code:
 
 - **Ubuntu gains one pass.** `tests/test_transport.py` holds a POSIX permission
-  test that skips on Windows and runs on Linux, so 207/18 local becomes 208/17
-  in CI.
+  test that skips on Windows and runs on Linux, so one local Windows skip
+  becomes a CI Ubuntu pass.
 - **CI Windows gains two skips.** The runner has no `synapse`, so the two
   guarded host-turn tests that exercise `synapse.cognitive.agent_loop.run_turn`
-  skip there. Local runs have `synapse`, so only the POSIX test skips: 224/1
-  local against 222/3 on the runner.
+  skip there. Local runs have `synapse`, so they execute.
 
-That is 29 contract tests plus 45 tests written by the adapter/compat agents.
-The contract suite alone is `29 passed`. These results prove the code satisfies
+These results prove the code satisfies
 the plain-CPython contract; they do **not** prove any Houdini behaviour. Per the
 verification brief, `verification/MATRIX.md` keeps every Houdini row at
 `not_run`/`proposed`.
@@ -292,7 +291,7 @@ uninstall path.
 
 ## First check a human should run
 
-1. `py -3.12 -m pytest tests -q` — expect 207 passed, 18 skipped. This is the fastest proof
+1. `py -3.12 -m pytest tests -q` — expect 260 passed, 18 skipped. This is the fastest proof
    the tree is internally consistent.
 2. Then Houdini Check A above — the panel install is the smallest live surface
    and fails loudly if the package JSON or panel path is wrong.

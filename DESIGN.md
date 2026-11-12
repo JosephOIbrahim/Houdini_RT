@@ -342,8 +342,8 @@ curated pure-Python subset:
 ### 5.3 Subprocess alternative
 
 The 3.14 work can also run outside Houdini's interpreter: launch
-`C:\Python314\python.exe` (3.14.2) or one of the `Scripts\*.exe` wrappers, which
-embed `#!C:\Python314\python.exe`. That is a subprocess model, not an in-process
+`%HOUDINI_RT_ROOT%\python.exe` (3.14.2) or one of the `Scripts\*.exe` wrappers,
+which now embed `#!%HOUDINI_RT_ROOT%\python.exe`. That is a subprocess model, not an in-process
 toggle. It is the safest way to execute 3.14 code, and it is not what
 `activate()` does.
 
@@ -526,9 +526,9 @@ run is included because 3.14 is the target ABI.
 |---|---|
 | `load_targets("rt_toggle.json")` | Resolves one target, `houdini_rt`, with the expected home, Python 3.14, site-packages, `entry_point=None`, empty env |
 | `get_adapter().probe()` under 3.14 | `available=True`, compatibility `safe=True` (219 compiled and 14,244 pure-Python files scanned) |
-| `check_compatibility(target, houdini_python="3.13.10")` | `safe=False`, `interpreter_abi="cp313"`, blocker names 104 `cp314` files |
+| `check_compatibility(target, houdini_python="3.13.10")` | `safe=False`, `interpreter_abi="cp313"`, blocker names 108 `cp314` files (104 at the time of that probe; four were restored in the 2026-11-11 repair) |
 | `pytest tests` under `py -3.12` | 74 passed (policy wiring added 2026-11-11) |
-| `pytest tests` under a 3.14 host | Not re-run here: this machine has no working 3.14 console interpreter. The earlier 62/7 result was the host-dependent policy gap; the state-contract tests now declare the running interpreter, and the adapter forwards the opt-in, so a 3.14 run is expected green. |
+| `pytest tests` under a 3.14 host | 246 passed, 1 skipped (the POSIX permission test) on 3.14.2, 2026-11-12. The earlier 62/7 result was the host-dependent policy gap; the state-contract tests now declare the running interpreter, and the adapter forwards the opt-in. |
 
 The earlier seven failures were host-dependent, not a state-machine defect: the
 contract tests declared Python 3.12 and expected activation on a 3.14 host.

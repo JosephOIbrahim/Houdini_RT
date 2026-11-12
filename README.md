@@ -222,7 +222,8 @@ The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`.
 **Proven live in hython 22.0.429:**
 
 - The panel installs; `interfaceByName("RT_Toggle")` resolves.
-- The cp314 target is refused: `safe=false`, 104 blockers, no cp314 import.
+- The cp314 target is refused: `safe=false`, 108 blockers (104 before the
+  2026-11-11 repair), no cp314 import.
 - The shelf XSD validates; the tool script reports one refusal line.
 - The node builds and its callback function writes REFUSED and reverts.
 - The state file survives restart, reports ERROR, re-activates, and deactivates.

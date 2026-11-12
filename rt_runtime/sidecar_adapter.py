@@ -953,8 +953,12 @@ class SidecarAdapter:
     # -- supervisor ---------------------------------------------------------
 
     def _launcher_argv(self) -> list[str]:
-        launcher = str(self.launcher) if self.launcher else sys.executable
-        return [launcher, "-I", "-X", "utf8", "-u"]
+        if self.launcher is None:
+            raise SidecarConfigError(
+                "no sidecar launcher: set `launcher` in rt_toggle.json or "
+                "RT_SIDECAR_PYTHON to the runtime tree's python.exe"
+            )
+        return [str(self.launcher), "-I", "-X", "utf8", "-u"]
 
     def _child_env(self, policy: PrecedenceDecision) -> dict[str, str]:
         env = {"RT_SIDECAR_PACKAGE_PRECEDENCE": policy.effective}
@@ -998,7 +1002,11 @@ class SidecarAdapter:
 
         launcher_ok = _safe_is_file(self.launcher)
         if not launcher_ok:
-            blockers.append(f"launcher not found: {self.launcher}")
+            blockers.append(
+                f"launcher not found: {self.launcher}. Set `launcher` in "
+                "rt_toggle.json or RT_SIDECAR_PYTHON to the runtime tree's "
+                "python.exe."
+            )
         launcher_python = _python_from_path(self.launcher)
         expect_python = self.settings.expect_python
         if _major_minor(expect_python) != _major_minor(DEFAULT_EXPECT_PYTHON):

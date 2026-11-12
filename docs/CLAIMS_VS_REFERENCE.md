@@ -79,8 +79,8 @@ Direct evidence from `%HOUDINI_RT_ROOT%`:
 | 3.14 import library | `libs\python314.lib` |
 | 3.14 runtime DLL referenced by the launcher | `pythonw.exe` contains `python314.dll` |
 | 3.14 extension modules | 108 `*cp314*.pyd` files under `Lib\site-packages` (195 `.pyd` total) |
-| Full package set | 572 entries under `Lib\site-packages` |
-| Launcher present | `pythonw.exe` only; no `python.exe` in the root |
+| Full package set | 573 entries under `Lib\site-packages` |
+| Launcher present | `python.exe` and `pythonw.exe` (both since the 2026-11-11 repair); `python.exe` is the sidecar launcher |
 | Console wrappers | 102 `.exe` files under `Scripts\` |
 
 `D:\Houdini_AI_Reference` says nothing about any of this. It is a Houdini docs
@@ -278,8 +278,8 @@ The following replaces C2 in full.
 > ABI-specific binaries are present.
 >
 > **How to execute 3.14 work:** launch it outside Houdini's interpreter, via
-> `C:\Python314\python.exe` (3.14.2) or the `Scripts\*.exe` wrappers whose
-> shebang points there. That is a subprocess model, not an in-process toggle.
+> `%HOUDINI_RT_ROOT%\python.exe` (3.14.2) or the `Scripts\*.exe` wrappers,
+> whose shebang now points there. That is a subprocess model, not an in-process toggle.
 >
 > **When the full directory is legitimate:** only under a 3.14 host whose ABI
 > matches the tree, for example a process launched with `C:\Python314\python.exe`
@@ -295,10 +295,11 @@ Why this correction is not optional:
    refusal from the guard.
 
 Implementation note (outside Houdini): `rt_runtime\compat.py` now implements
-this refusal by scanning filenames only. Run under `C:\Python314\python.exe`
+this refusal by scanning filenames only. Run under `%HOUDINI_RT_ROOT%\python.exe`
 with a simulated host version, `check_compatibility(target,
 houdini_python="3.13.10")` returns `safe=False` with an `interpreter_abi` of
-`cp313` and a blocker naming 104 `cp314` files. The same call under 3.14.2
+`cp313` and a blocker naming 108 `cp314` files (104 at the time of that probe;
+the tree gained four in the 2026-11-11 repair). The same call under 3.14.2
 returns `safe=True`. The guard has not run inside Houdini's own interpreter.
 
 ---

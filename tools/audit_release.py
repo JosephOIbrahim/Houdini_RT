@@ -39,7 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT / "dist"
-VERSION_FALLBACK = "0.1.0"
+VERSION_FALLBACK = "0.1.1"
 SELF_REL = "tools/audit_release.py"
 # Scanner definitions necessarily contain the patterns they look for.
 SCAN_EXCLUDED_RELS = {SELF_REL, ".github/workflows/tests.yml"}

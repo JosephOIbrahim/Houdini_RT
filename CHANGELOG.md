@@ -13,6 +13,47 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-12
+
+### Added
+
+- **Sidecar mode** in `rt_runtime`: a per-target `mode: "sidecar"` and
+  `sidecar` block, a `SidecarAdapter`, and `rt_runtime.sidecar` with the
+  lifecycle supervisor, loopback transport and host stub. The in-process
+  adapter path is unchanged.
+- **Supervised 3.14 sidecar**: start/stop/health, lock and stale-lock
+  handling, host crash recovery, parent-exit watchdog, a loopback HTTP
+  control surface with token auth, and a `status.json` contract.
+- **Package precedence**: runtime-first by default; base-first only with an
+  explicit degraded opt-in and a visible `DEGRADED` reason.
+- **Payload entry point**: `sidecar.entry_point` reaches the host as
+  `--entry-point`; the host invokes a no-arg target, a one-context target, or
+  the `run_turn` shape with a guarded client and dispatcher.
+- **Guarded live turn**: the `run_turn` probe uses a sidecar-scoped
+  `model_access.json`, a no-network guarded client by default, and
+  `RT_SIDECAR_LIVE_MODEL=1` for a real endpoint turn.
+
+### Changed
+
+- The runtime tree was repaired: missing core DLLs and cp314 binaries were
+  restored, and the six affected distributions pass a 798-hash RECORD audit.
+- CI now runs 3.12/3.13 on Ubuntu and 3.14 on Windows; actions bumped to v7.
+- Sidecar lifecycle and transport suites moved into `tests/`.
+
+### Proven
+
+- RT-first live activation from hython 22.0.429 reaches ON with `/health 200`.
+- A live `run_turn` against `https://api.anthropic.com` returns
+  `AgentTurnResult: complete`.
+- 176 tests pass on Python 3.14; 159 pass with skips on 3.12.
+
+### Known limitations
+
+- GUI render, shelf click, parm event dispatch, gear-menu duplicate and
+  uninstall are still manual checks.
+- `run_turn` is invoked once at startup; a request/turn service loop is not
+  implemented.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added

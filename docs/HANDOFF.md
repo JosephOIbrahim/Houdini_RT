@@ -1,6 +1,6 @@
 # RT Toggle — session hand-off (2026-11-11)
 
-Latest main: **9db48c5** "Run a guarded offline turn for the sidecar payload probe".
+Latest main: **v0.1.1** release (sidecar activation and guarded live turn).
 Repo: `%HOUDINI_RT_ROOT%\extensions\rt_toggle`
 Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
 
@@ -60,8 +60,8 @@ HOUDINI_PACKAGE_SKIP=1 py -3.12 -m pytest ...   # or the hython runner in %TEMP%
    delivery, plus cancellation.
 3. **GUI checks.** Pane render, shelf click, parm event dispatch, gear-menu
    duplicate, uninstall (Install Check 6) are still manual.
-4. **Release.** `v0.1.0` remains the published tag; the sidecar work is on
-   `main`. A `v0.1.1` with a rebuilt zip is the next release decision.
+4. **Release.** `v0.1.1` is the published release (sidecar activation and
+   guarded live turn); `v0.1.0` remains the prior scaffold tag.
 
 ## Cautions
 

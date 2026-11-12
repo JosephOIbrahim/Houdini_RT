@@ -230,3 +230,7 @@ The state file `.rt_toggle_state.json` is written at the extension root beside
 ## License
 
 License: TBD. No license file is included; licensing is the owner's decision.
+
+---
+
+*RT Toggle v0.1.1 · Myth and Logic*

@@ -460,6 +460,22 @@ def test_control_surface_handover(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+def test_entry_point_reaches_the_host_command(tmp_path):
+    supervisor = _supervisor(
+        tmp_path,
+        entry_point="synapse.cognitive.agent_loop.run_turn",
+        serve=True,
+    )
+
+    command = supervisor._build_command()
+
+    assert "--entry-point" in command
+    assert (
+        command[command.index("--entry-point") + 1]
+        == "synapse.cognitive.agent_loop.run_turn"
+    )
+
+
 # Houdini restart behaviour
 # ---------------------------------------------------------------------------
 

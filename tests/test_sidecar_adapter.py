@@ -313,6 +313,29 @@ def test_no_health_requirement_leaves_the_host_unserved(tmp_path):
     assert supervisor.kwargs["serve"] is False
 
 
+def test_entry_point_reaches_the_supervisor(tmp_path):
+    supervisor = FakeSupervisor(
+        report=starting_report(),
+        start_result=FakeResult(True, "ready", True, 4242, ["started"]),
+        report_after_start=ready_report(),
+    )
+    adapter = make_adapter(
+        make_settings(
+            tmp_path,
+            entry_point="synapse.cognitive.agent_loop.run_turn",
+        ),
+        supervisor,
+    )
+
+    result = adapter.activate()
+
+    assert result.ok is True
+    assert (
+        supervisor.kwargs["entry_point"]
+        == "synapse.cognitive.agent_loop.run_turn"
+    )
+
+
 def test_already_running_is_idempotent(tmp_path):
     supervisor = FakeSupervisor(report=ready_report())
     adapter = make_adapter(make_settings(tmp_path), supervisor)

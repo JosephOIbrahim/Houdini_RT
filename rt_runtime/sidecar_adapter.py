@@ -347,6 +347,7 @@ class SidecarSettings:
     runtime_home: Path | None = None
     site_packages: Path | None = None
     base_site_packages: Path | None = None
+    entry_point: str | None = None
     port: int = 0
     package_precedence: str = PRECEDENCE_RUNTIME_FIRST
     allow_degraded_base_first: bool = False
@@ -371,6 +372,12 @@ class SidecarSettings:
             "base_site_packages",
         ):
             object.__setattr__(self, name, _coerce_path(getattr(self, name)))
+
+        object.__setattr__(
+            self,
+            "entry_point",
+            None if self.entry_point is None else str(self.entry_point),
+        )
 
         precedence = str(self.package_precedence or "").strip().lower()
         if precedence not in _PRECEDENCES:
@@ -442,6 +449,7 @@ class SidecarSettings:
             "parent_watchdog",
             "expect_python",
             "strict_sys_prefix",
+            "entry_point",
         )
         for key in passthrough:
             if key in raw:
@@ -501,10 +509,12 @@ def settings_for_target(
         raw.get("site_packages") if target_site_packages is None else target_site_packages,
         base,
     )
+    entry_point = settings.entry_point or raw.get("entry_point")
     return replace(
         settings,
         runtime_home=runtime_home,
         site_packages=site_packages,
+        entry_point=None if entry_point is None else str(entry_point),
     )
 
 
@@ -971,6 +981,7 @@ class SidecarAdapter:
             # Health-required mode needs the control surface; the host stub
             # serves nothing without --serve.
             "serve": bool(self.settings.require_health),
+            "entry_point": self.settings.entry_point,
         }
         if self._supervisor_factory is not None:
             return self._supervisor_factory(**kwargs)

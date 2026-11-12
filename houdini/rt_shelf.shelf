@@ -29,7 +29,7 @@
     <memberTool name="rt_turn_cancel"/>
   </toolshelf>
 
-  <tool name="rt_toggle" label="RT Toggle" icon="BUTTONS_switch">
+  <tool name="rt_toggle" label="RT Toggle" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_toggle.svg">
     <helpText><![CDATA[
       Toggle the HoudiniRT runtime on or off.
 
@@ -110,7 +110,7 @@ except Exception:
     ]]></script>
   </tool>
 
-  <tool name="rt_turn" label="RT Turn" icon="BUTTONS_play">
+  <tool name="rt_turn" label="RT Turn" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_turn.svg">
     <helpText><![CDATA[
       Submit one turn to the running HoudiniRT sidecar.
 
@@ -170,7 +170,7 @@ except Exception:
     ]]></script>
   </tool>
 
-  <tool name="rt_turn_cancel" label="RT Turn Cancel" icon="BUTTONS_stop">
+  <tool name="rt_turn_cancel" label="RT Turn Cancel" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_turn_cancel.svg">
     <helpText><![CDATA[
       Cancel the most recent turn submitted from the RT Turn shelf tool.
     ]]></helpText>

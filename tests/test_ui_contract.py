@@ -262,6 +262,35 @@ def test_node_recipe_exposes_turn_parms():
     assert not problems, "Node turn-parm contract violations:\n  " + "\n  ".join(problems)
 
 
+def test_surface_icons_exist_and_are_referenced():
+    """The three tool icons must ship and every surface must point at them."""
+    icons = EXT_ROOT / "houdini" / "icons"
+    expected = ("rt_toggle.svg", "rt_turn.svg", "rt_turn_cancel.svg")
+    problems: list[str] = []
+    for name in expected:
+        path = icons / name
+        if not path.is_file():
+            problems.append(f"missing icon: houdini/icons/{name}")
+            continue
+        try:
+            ET.fromstring(path.read_text(encoding="utf-8"))
+        except ET.ParseError as exc:
+            problems.append(f"houdini/icons/{name}: not XML ({exc})")
+
+    shelf = EXT_ROOT / "houdini" / "rt_shelf.shelf"
+    if shelf.is_file():
+        text = _read(shelf)
+        for name in expected:
+            if f"icons/{name}" not in text:
+                problems.append(f"rt_shelf.shelf does not reference icons/{name}")
+
+    panel = EXT_ROOT / "houdini" / "rt_panel.pypanel"
+    if panel.is_file() and "icons/rt_toggle.svg" not in _read(panel):
+        problems.append("rt_panel.pypanel does not reference icons/rt_toggle.svg")
+
+    assert not problems, "Icon contracts:\n  " + "\n  ".join(problems)
+
+
 # ---------------------------------------------------------------------------
 # shelf
 # ---------------------------------------------------------------------------

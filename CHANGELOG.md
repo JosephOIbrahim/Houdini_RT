@@ -13,6 +13,16 @@ actually run.
 
 ## [Unreleased]
 
+### Added
+
+- **Three SVG icons** — `houdini/icons/rt_toggle.svg`, `rt_turn.svg` and
+  `rt_turn_cancel.svg` — drawn as one family on a 32 px grid. The shelf tools
+  and the panel tab now point at them instead of built-in glyphs. The paths go
+  through `$RT_TOGGLE_ROOT`, so a copy install must set that variable; hython
+  22.0.429 expands the string to a real file.
+- A UI contract test that each icon exists, parses as XML, and is referenced by
+  the shelf and the panel.
+
 ## [0.1.4] - 2026-11-12
 
 ### Added

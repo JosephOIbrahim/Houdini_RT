@@ -3,7 +3,7 @@
   <!-- HoudiniRT runtime toggle. Self-contained: the widget script lives in
        the CDATA block below so this file works when installed alone. The
        readable copy of the same code is houdini/rt_panel.py. -->
-  <interface name="RT_Toggle" label="RT Toggle" icon="hicon:/SVGIcons.index?MISC_python.svg" help_url="">
+  <interface name="RT_Toggle" label="RT Toggle" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_toggle.svg" help_url="">
     <script><![CDATA[
 """HoudiniRT runtime ON/OFF Python Panel.
 

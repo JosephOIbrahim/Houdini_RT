@@ -36,8 +36,10 @@ cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
   never blocks; the shelf and node have no timer, so they poll for a bounded
   window (`RT_TURN_POLL_S`, default 2 s) and leave the turn running after that.
   Offline by default; `RT_SIDECAR_LIVE_MODEL=1` turns the same controls live.
-- **Three surfaces.** A Python Panel (primary), a shelf tool (secondary), and an
-  optional node. The viewport camera dropdown is not an extension point.
+- **Three surfaces, one look.** The panel and the shelf’s three tools share a
+  small SVG icon family in `houdini/icons/`. A Python Panel (primary), a shelf
+  tool set (secondary), and an optional node. The viewport camera dropdown is
+  not an extension point.
 - **One adapter.** Every surface calls the same process-wide adapter, so they
   share one lock, one state file and one set of path bookkeeping.
 
@@ -65,6 +67,9 @@ distribution root.
 
 **Never** put `%HOUDINI_RT_ROOT%\Lib\site-packages` on `PYTHONPATH`, in a package
 JSON, in `houdini.env`, or in a startup script. The guard exists to keep it out.
+
+The icons resolve through `RT_TOGGLE_ROOT`. When the shelf pair is copied into
+`%PREF%\toolbar\`, set that variable too, or the tools fall back to no icon.
 
 ---
 

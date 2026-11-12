@@ -183,8 +183,17 @@ stdlib APIs may still fail.
 py -3.12 -m pytest tests -q -p no:cacheprovider
 ```
 
-- **Python 3.12:** 207 passed, 18 skipped (3.14-only sidecar lifecycle tests skip).
-- **Python 3.14:** 224 passed, 1 skipped.
+- **Python 3.12 (local, Windows):** 207 passed, 18 skipped (3.14-only sidecar
+  lifecycle tests, plus the POSIX permission test).
+- **Python 3.14 (local, Windows):** 224 passed, 1 skipped (the POSIX
+  permission test).
+- **CI, Ubuntu:** 208 passed, 17 skipped on both 3.12 and 3.13 — the POSIX
+  permission test runs there instead of skipping.
+- **CI, Windows:** 222 passed, 3 skipped on 3.14 — `synapse` is not installed on
+  the runner, so the two guarded host-turn tests skip as well as the POSIX one.
+
+The local and CI counts differ for host reasons, not code reasons: local runs
+have `synapse` available, and Windows cannot exercise POSIX permission bits.
 
 The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`. CI runs
 3.12/3.13 on Ubuntu and the full suite on 3.14 on Windows.

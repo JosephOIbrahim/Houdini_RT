@@ -13,6 +13,8 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-12
+
 ### Added
 
 - **Turn control on the shelf and the node**, matching the panel. `rt_shelf.py`

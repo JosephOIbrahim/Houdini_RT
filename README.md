@@ -4,7 +4,7 @@
 
 # RT Toggle
 
-**Houdini 22 runtime on/off for HoudiniRT — v0.1.5**
+**Houdini 22 runtime on/off for HoudiniRT — v0.1.6**
 
 ## The answer first
 
@@ -269,4 +269,4 @@ License: TBD. No license file is included; licensing is the owner's decision.
 
 ---
 
-*RT Toggle v0.1.5 · Myth and Logic*
+*RT Toggle v0.1.6 · Myth and Logic*

@@ -13,6 +13,8 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-12
+
 ### Added
 
 - **Radial menu builder** (`houdini/rt_radial.py`): creates the `RT` menu with
@@ -22,6 +24,9 @@ actually run.
   binding stays a Radial Menu Editor action.
 - 6 static tests covering the item spec, icon files, the check expression, the
   generated action scripts and the documented API markers.
+- GUI checklist step 11 for the radial menu, which records separately whether
+  the menu builds, whether the check ticks, and whether the actions run.
+
 
 ## [0.1.5] - 2026-11-12
 

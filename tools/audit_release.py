@@ -49,6 +49,7 @@ REQUIRED_FILES = [
     "DESIGN.md",
     "INSTALL.md",
     "VERSION",
+    "LICENSE",
     "rt_toggle.json",
     "rt_runtime/__init__.py",
     "rt_runtime/adapter.py",

@@ -271,7 +271,7 @@ The state file `.rt_toggle_state.json` is generated at runtime and is not tracke
 
 ## License
 
-License: TBD. No license file is included; licensing is the owner's decision.
+Apache-2.0. See [LICENSE](LICENSE). The license ships in the release archive.
 
 ---
 

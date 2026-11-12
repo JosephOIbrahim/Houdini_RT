@@ -36,6 +36,7 @@ INCLUDE_FILES = (
     "VERSION",
     "rt_toggle.json",
     "pyproject.toml",
+    "LICENSE",
 )
 
 # Additional top-level files matched by glob (release notes are optional).
@@ -71,6 +72,7 @@ EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 # archive is not a usable release, even if it would still build.
 REQUIRED_FILES = (
     "VERSION",
+    "LICENSE",
     "rt_toggle.json",
     "rt_runtime/__init__.py",
     "houdini/rt_node.py",

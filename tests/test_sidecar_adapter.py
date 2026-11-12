@@ -283,6 +283,36 @@ def test_success_maps_to_on(tmp_path):
     assert supervisor.kwargs["launcher"][1:] == ["-I", "-X", "utf8", "-u"]
 
 
+def test_require_health_starts_the_control_surface(tmp_path):
+    supervisor = FakeSupervisor(
+        report=starting_report(),
+        start_result=FakeResult(True, "ready", True, 4242, ["started"]),
+        report_after_start=ready_report(),
+    )
+    adapter = make_adapter(make_settings(tmp_path), supervisor)
+
+    result = adapter.activate()
+
+    assert result.ok is True
+    assert supervisor.kwargs["serve"] is True
+
+
+def test_no_health_requirement_leaves_the_host_unserved(tmp_path):
+    supervisor = FakeSupervisor(
+        report=starting_report(),
+        start_result=FakeResult(True, "ready", True, 4242, ["started"]),
+        report_after_start=ready_report(),
+    )
+    adapter = make_adapter(
+        make_settings(tmp_path, require_health=False), supervisor
+    )
+
+    result = adapter.activate()
+
+    assert result.ok is True
+    assert supervisor.kwargs["serve"] is False
+
+
 def test_already_running_is_idempotent(tmp_path):
     supervisor = FakeSupervisor(report=ready_report())
     adapter = make_adapter(make_settings(tmp_path), supervisor)

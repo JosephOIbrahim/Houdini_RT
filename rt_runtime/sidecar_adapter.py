@@ -968,6 +968,9 @@ class SidecarAdapter:
             "start_timeout": self.settings.start_timeout,
             "stop_grace": self.settings.stop_grace,
             "expect_python": self.settings.expect_python,
+            # Health-required mode needs the control surface; the host stub
+            # serves nothing without --serve.
+            "serve": bool(self.settings.require_health),
         }
         if self._supervisor_factory is not None:
             return self._supervisor_factory(**kwargs)

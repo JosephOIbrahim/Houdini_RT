@@ -862,7 +862,10 @@ class SidecarSupervisor:
                     holder = self._read_lock(attempts=10)
                     if holder is None:
                         age = _file_age_seconds(self.lock_path)
-                        if age is not None and age < LOCK_SETTLE_SECONDS:
+                        if age is None:
+                            # It vanished between the failed create and the read.
+                            continue
+                        if age < LOCK_SETTLE_SECONDS:
                             # Possibly another process between open and write.
                             time.sleep(0.05)
                             continue

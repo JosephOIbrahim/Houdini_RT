@@ -118,5 +118,5 @@ questions by rule rather than taste:
 - That the shelf icons draw at the intended size.
 - That any of the three turn controls has been clicked.
 
-All three are in `verification/GUI_CHECKS_v0.1.4.md`, under **NOT RUN** until a
+All three are in `verification/GUI_CHECKS.md`, under **NOT RUN** until a
 person records a result.

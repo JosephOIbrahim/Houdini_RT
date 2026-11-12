@@ -13,6 +13,8 @@ actually run.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-12
+
 ### Added
 
 - **Three SVG icons** — `houdini/icons/rt_toggle.svg`, `rt_turn.svg` and
@@ -22,6 +24,18 @@ actually run.
   22.0.429 expands the string to a real file.
 - A UI contract test that each icon exists, parses as XML, and is referenced by
   the shelf and the panel.
+- **`docs/ARTIST_LAUNCH.md`**: the five native places an artist looks — shelf,
+  viewer tab menu, HUD handles, radial menu, panel — with a step-by-step HUD
+  recipe and the documented hard limits (no API for parameter HUD handles, no
+  global viewport right-click hook, `hudInfo` is read-only, Qt cannot be
+  embedded in the viewport, Vulkan overlay behaviour undocumented).
+- A tenth GUI check for HUD handles, with an optional Vulkan sub-check whose
+  honest verdict is NOT RUN when Vulkan is not in use.
+
+### Changed
+
+- The package JSON now sets `RT_TOGGLE_ROOT` alongside `PYTHONPATH`, so a
+  package install resolves the icons without a manual environment variable.
 
 ## [0.1.4] - 2026-11-12
 

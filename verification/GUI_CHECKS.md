@@ -1,4 +1,4 @@
-# GUI checks — v0.1.4 turn controls on Houdini 22.0.429
+# GUI checks — turn controls on Houdini 22.0.429
 
 Target build: **Houdini 22.0.429** — the only build with structural evidence
 behind it (panel install, shelf XSD, shelf registration, `rt_node.build()`,

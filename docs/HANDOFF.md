@@ -54,18 +54,18 @@ Runtime tree: `%HOUDINI_RT_ROOT%` (repaired).
 ## Counts
 
 ```
-local Windows   3.12: 220 passed, 18 skipped
-local Windows   3.14: 237 passed,  1 skipped
-CI Ubuntu       3.12: 221 passed, 17 skipped
-CI Ubuntu       3.13: 221 passed, 17 skipped
-CI Windows      3.14: 235 passed,  3 skipped
+local Windows   3.12: 222 passed, 18 skipped
+local Windows   3.14: 239 passed,  1 skipped
+CI Ubuntu       3.12: 223 passed, 17 skipped
+CI Ubuntu       3.13: 223 passed, 17 skipped
+CI Windows      3.14: 237 passed,  3 skipped
 ```
 
-CI run `43246212712` at `dd38b3b` — all four jobs success. The local/CI gap
+CI run `43249796804` at `32480fa` — all four jobs success. The local/CI gap
 keeps its two causes: Ubuntu runs the POSIX permission test that Windows skips,
 and the Windows runner has no `synapse`, so the two guarded host-turn tests
-skip there. Each leg is 13 higher than at `cb1ce4e`: 11 turn-control tests and
-2 UI contract tests, none of them skipped away.
+skip there. Each leg is 2 higher than at `41293e3`: the shelf-tool and
+node-parm UI contract tests, neither of them skipped away.
 
 ## Key paths
 

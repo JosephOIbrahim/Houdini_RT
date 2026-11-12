@@ -194,14 +194,14 @@ py -3.12 -m pytest tests -q -p no:cacheprovider
   lifecycle tests, plus the POSIX permission test).
 - **Python 3.14 (local, Windows):** 239 passed, 1 skipped (the POSIX
   permission test).
-- **CI, Ubuntu:** 221 passed, 17 skipped on both 3.12 and 3.13 — the POSIX
+- **CI, Ubuntu:** 223 passed, 17 skipped on both 3.12 and 3.13 — the POSIX
   permission test runs there instead of skipping.
-- **CI, Windows:** 235 passed, 3 skipped on 3.14 — `synapse` is not installed on
+- **CI, Windows:** 237 passed, 3 skipped on 3.14 — `synapse` is not installed on
   the runner, so the two guarded host-turn tests skip as well as the POSIX one.
 
 The local and CI counts differ by host, not by code: local runs have `synapse`
 available, and Windows cannot exercise POSIX permission bits. CI figures are
-from run `43246212712` at `dd38b3b`; all four jobs passed.
+from run `43249796804` at `32480fa`; all four jobs passed.
 
 The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`.
 

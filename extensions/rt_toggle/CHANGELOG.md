@@ -13,6 +13,25 @@ actually run.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-16
+
+### Added
+
+- Integrated HoudiniRT renderer toggle for a chosen Solaris Scene Viewer,
+  native selected/paused state, Pause/Resume and previous-renderer restoration.
+- One process controller shared by panel, shelf, radial menu and node, with
+  per-pane ownership, manual-switch protection and retriable partial restores.
+- Explicit viewer selection, node Refresh/Pause controls, controller/surface
+  regression tests and an isolated real-Houdini GUI smoke procedure.
+
+### Changed
+
+- The primary toggle now controls rendering without starting a sidecar.
+  Existing assistant controls are optional diagnostics inside the same panel.
+- Panel display name is HoudiniRT; stable interface ID remains RT_Toggle.
+- Versioned setup and verification describe renderer state separately from
+  image completion. No changes to the tracing algorithm are included.
+
 ## [0.1.7] - 2026-11-12
 
 ### Fixed

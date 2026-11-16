@@ -1,17 +1,13 @@
-"""HoudiniRT shelf tool - runtime ON/OFF toggle.
+"""HoudiniRT shelf controls for the intended Solaris viewer.
 
 This is the readable copy of the code run by the ``rt_toggle`` shelf tool.
 ``rt_shelf.shelf`` holds a thin bootstrap that locates this module, imports it,
 and calls :func:`toggle_from_shelf`. Keep both files in the same folder.
 
-Contract used here (fixed by rt_runtime):
-
-    rt_runtime.session.get_adapter() -> adapter
-    adapter.toggle() -> ActivationResult(ok, state, changed, reasons, error)
-
-The adapter decides whether activation is allowed (including the Python
-version compatibility guard). This module adds no rules of its own; it reports
-whatever the adapter returns.
+The primary toggle and pause actions use the process-wide render controller.
+They never start the optional Python assistant. The caller's pane is passed
+through to the controller so an ambiguous desktop never selects an arbitrary
+viewer. Existing assistant turn helpers remain available independently.
 
 LIMITATION - the shelf button's label and icon are static
     A shelf tool's label and icon are declared once, in the ``.shelf`` XML, and
@@ -186,30 +182,78 @@ def report_status(text, level="message"):
 # ---------------------------------------------------------------------------
 
 
-def toggle_from_shelf():
-    """Toggle the HoudiniRT runtime and report the outcome.
-
-    Returns the ActivationResult on success, or None when the runtime could not
-    be imported or the adapter raised. Never raises.
-    """
+def _render_action(action, viewer=None, viewer_name=None):
+    """Execute a shared render command on the caller's target; never raises."""
     try:
         ensure_runtime_importable()
-        from rt_runtime import session
+        from rt_runtime.render_session import get_render_controller
 
-        adapter = session.get_adapter()
-        result = adapter.toggle()
-    except Exception:
-        detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
-        report_status(f"{PREFIX}: toggle failed - {detail}", "error")
-        traceback.print_exc()
+        controller = get_render_controller()
+        target = controller.resolve_viewer(viewer=viewer, viewer_name=viewer_name)
+        result = getattr(controller, action)(target)
+    except Exception as exc:
+        report_status(f"{PREFIX}: {exc}", "error")
         return None
 
-    try:
-        text, level = describe_result(result)
-    except Exception:
-        text, level = f"{PREFIX}: toggle returned an unrecognized result", "warning"
+    text, level = describe_render_status(result)
     report_status(text, level)
     return result
+
+
+def describe_render_status(result):
+    """Report observed renderer state, not a worker heartbeat or convergence."""
+    state = str(result.state).upper()
+    target = result.viewer_name or "no viewer"
+    renderer = result.renderer or "none"
+    detail = result.error or result.message
+    pending = getattr(result, "pending", "")
+    if pending:
+        detail = f"Pending {pending}: {detail}"
+    text = f"{PREFIX}: {state} | {target} | {renderer}"
+    if detail:
+        text += f" | {detail}"
+    level = "error" if result.error else (
+        "warning" if result.state == "unavailable" else "message"
+    )
+    return text, level
+
+
+def toggle_from_shelf(viewer=None, viewer_name=None):
+    """Enable HoudiniRT or restore the renderer in the intended viewer."""
+    return _render_action("toggle", viewer, viewer_name)
+
+
+def pause_from_shelf(viewer=None, viewer_name=None):
+    """Pause/resume HoudiniRT in the intended viewer."""
+    return _render_action("toggle_pause", viewer, viewer_name)
+
+
+def refresh_from_shelf(viewer=None, viewer_name=None):
+    """Read the intended viewer without changing it."""
+    return _render_action("status", viewer, viewer_name)
+
+
+def render_is_on(viewer=None):
+    """Read-only radial-menu check; unavailable/ambiguous targets are unticked."""
+    try:
+        ensure_runtime_importable()
+        from rt_runtime.render_session import get_render_controller
+        controller = get_render_controller()
+        return controller.status(controller.resolve_viewer(viewer=viewer)).state in (
+            "active", "paused"
+        )
+    except Exception:
+        return False
+
+
+def render_is_paused(viewer=None):
+    try:
+        ensure_runtime_importable()
+        from rt_runtime.render_session import get_render_controller
+        controller = get_render_controller()
+        return controller.status(controller.resolve_viewer(viewer=viewer)).state == "paused"
+    except Exception:
+        return False
 
 
 if __name__ == "__main__":
@@ -308,7 +352,7 @@ def turn_from_shelf(prompt=None, wait_s=None):
 
     if control is None:
         report_status(
-            f"{TURN_PREFIX}: sidecar is not running - turn the runtime ON first",
+            f"{TURN_PREFIX}: optional assistant is not connected; renderer controls remain available",
             "warning",
         )
         return None

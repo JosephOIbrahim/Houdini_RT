@@ -13,7 +13,7 @@
 <menuDocument>
     <menu>
         <actionItem id="pythonpanel::RT_Toggle">
-            <label>RT Toggle</label>
+            <label>HoudiniRT</label>
             <insertAfter>pythonpanel::log_viewer</insertAfter>
         </actionItem>
     </menu>

@@ -1,138 +1,85 @@
-# Artist launch — shelf, panel and viewport controls
+# Artist launch — HoudiniRT v0.2
 
-How an artist finds and uses RT Toggle without reading this repository. Every
-claim carries its source and its status; nothing here is a promise the build has
-not made.
+HoudiniRT is one renderer workflow in Houdini 22 / Solaris. The panel, shelf,
+radial menu and optional node share a session controller. The main toggle
+selects HoudiniRT in a target Scene Viewer; assistant connectivity does not
+control renderer state.
 
-Status words used below: **documented** (stated in a cited page), **tested**
-(run in Houdini 22.0.429 and recorded), **unverified** (not exercised in this
-build).
+Install the controls and matching renderer using [INSTALL.md](../INSTALL.md).
+The package sets `RT_TOGGLE_ROOT` to this extension. Start with a Solaris Scene
+Viewer displaying the scene you want to render.
 
-## The five native places an artist looks
+## Panel: choose, render, pause, restore
 
-| Level | Surface | What it gives | Status |
-|---|---|---|---|
-| 1 | Shelf strip | one click, always visible, custom SVG icons | registration tested in hython; clicks and icon rendering unverified |
-| 2 | Viewer Tab menu | type `rt`, Enter; lists shelf tools | documented |
-| 3 | HUD handles | controls floating over the viewport, bound to node parms | documented |
-| 4 | Radial menu | direction instead of reading; 3D viewer and network editor only | documented |
-| 5 | Python Panel | full state, blockers and turn result; a pane, never the viewport | install/interface lookup tested in hython; pane render unverified |
+1. Open the **HoudiniRT** Python Panel.
+2. Choose **Target viewer**. With several Solaris viewers, choose explicitly.
+3. Click **Render with HoudiniRT**.
+4. Use **Pause** or **Resume** for that viewer.
+5. Click **Turn off — restore previous renderer** to restore its recorded
+   renderer and pause state.
 
-## 1. Shelf
+The panel reads native state every 500 ms while visible. **Active (unpaused)**
+means HoudiniRT is selected and the native pause flag is false. **Paused**
+means that flag is true. Inspect image progress and renderer errors in the
+viewport; these labels do not measure samples, first pixels or convergence.
 
-Three tools in the `RT` shelf set: **RT Toggle**, **RT Turn**, **RT Turn
-Cancel**, each with its own SVG from `houdini/icons/`. The icons and the panel
-icon resolve through `RT_TOGGLE_ROOT`; the package JSON sets it, and a copy
-install must set it manually.
+Houdini can apply requests asynchronously. The panel shows **Pausing…**,
+**Resuming…** or **Restoring previous renderer…** alongside the observed
+state. Mutation buttons are unavailable while confirmation is pending. A
+10-second timeout reports an error; an incomplete Off can be retried.
 
-- Shelf tools can carry a file path, URL or `opdef:` icon — documented in
-  `hou.Tool.setIcon`.
-- A global hotkey is assigned with **Shift+Ctrl+Alt+click** on the tool —
-  documented in `shelf/customize`.
+Ownership lasts for the current Houdini process and survives panel recreation.
+Closing the panel does not turn rendering off. A manual renderer switch
+relinquishes ownership, so a later Off does not overwrite that choice. If
+HoudiniRT was already selected outside these controls, no previous renderer is
+invented: use the viewport renderer menu to switch away.
 
-## 2. Viewer Tab menu
+## Shelf and viewer menu
 
-The Tab menu over the 3D view lists **shelf tools**, not node types —
-documented in `basics/tabmenu`. No new code is needed beyond the tools carrying
-viewer context; an artist presses Tab, types `rt`, and gets the three tools.
+The **RT** shelf contains four tools:
 
-## 3. HUD handles — the answer to "controls in the viewport"
+| Tool | Action |
+|---|---|
+| HoudiniRT | Enable in the target viewer, or restore its previous renderer. |
+| Pause / Resume RT | Change that viewer's pause state. |
+| RT Turn | Submit an optional assistant turn. |
+| RT Turn Cancel | Cancel an optional assistant turn. |
 
-HUD handles display in the view and control a parameter on a node. The
-installed 22.0.429 help lists five handle types — **slider, checkbox,
-dropdown, button, trackpad** — and says a handle is created by dragging a
-parameter from the parameter editor into the view
-(`help:22.0.429/basics.zip/hud_handles.txt`). Houdini's own node pages tell
-artists to do exactly this (`nodes/sop/rbdpaint.md:49`).
+Render tools carry Solaris/LOP viewer context. Their status appears in the
+status bar and Python output; shelf icons are static. The invoking viewer is
+preferred. Without one, controls use the Solaris viewer under the cursor or
+the only eligible viewer. An ambiguous target produces a message.
 
-### The recipe, for the RT_TOGGLE node
+## Radial menu
 
-1. Build the node: `rt_node.build()` (or open a scene that already has it).
-2. Select it so its parameters show.
-3. Drag `enable` into the viewport — a **checkbox** HUD.
-4. Drag `rt_run_turn` (Run Turn) into the viewport — a **button** HUD.
-5. Drag `rt_cancel_turn` (Cancel Turn) into the viewport — a second button HUD.
-6. Right-click each handle and turn on **Persistent** so it stays visible when
-   another node is selected. Persistent handles are per node instance;
-   non-persistent ones are per node type and hide when the node is deselected.
-7. Position them, then turn on **Lock Placement** so a stray drag cannot move
-   the control.
-8. Use the Handles tool in the toolbox to hide or show the whole set.
-
-This is an **artist action, not an install step**. No public HOM API exists to
-create parameter HUD handles: a search of `Parm.md`, `Node.md` and `OpNode.md`
-in the reference corpus returns no `hud` hits. The only scriptable HUD is a
-viewer-state handle (`hudslider`, `hudintslider`) bound through
-`ViewerStateTemplate.bindHandle`, and that is a slider for a custom viewer
-state, not a button on a node.
-
-### Hard limits, so nobody promises more
-
-- **No global viewport right-click hook.** Right-click menus belong to viewer
-  states and exist only while that state is active (`hom/state_menus.md:8`).
-- **`hudInfo` is read-only.** It shows hints and values in an experimental
-  panel; row types are plain, divider, bargraph, choicegraph and group — no
-  buttons (`hom/hud_info.md:101-179`, `hom/hou/SceneViewer.md:505`).
-- **Qt cannot be embedded.** `hou.qt.ViewerOverlay` is "read-only information"
-  over the scene viewer; a Python Panel is a pane tab (`hom/hou/qt/
-  ViewerOverlay.md:13`, `hom/hou/PythonPanel.md:5`).
-- **Vulkan is undocumented here.** No corpus page links HUD handles, overlays
-  or menus to Vulkan. The only documented Vulkan differences are materials and
-  COP output. Whether the handles draw over the Vulkan viewport is
-  **unverified** and belongs in the GUI pass.
-
-## 4. Radial menu
-
-Radial menus are supported in the **3D viewer and the network editor** and are
-assigned in the Radial Menu Editor (`basics/radialmenus`). They are the fastest
-path once learned, and the only native surface that can show a state tick next
-to an action.
-
-`houdini/rt_radial.py` builds the menu: **RT Toggle** at the top with a check
-that reflects sidecar state, **RT Turn** on the right, **RT Turn Cancel** on the
-left, each with its icon. Run it from the Python Shell:
+Build the **RT** menu from Houdini's Python Shell:
 
 ```python
-import sys
-sys.path.insert(0, r"%HOUDINI_RT_ROOT%\extensions\rt_toggle\houdini")
+import os, sys
+sys.path.insert(0, os.path.join(os.environ["RT_TOGGLE_ROOT"], "houdini"))
 import rt_radial
-rt_radial.build()                      # session menu; rebuilds cleanly
-rt_radial.build(r"%PREF%\rt.radialmenu")  # also save a file to import
+rt_radial.build()
 ```
 
-Then assign a key to the `RT` menu in **Edit > Radial Menus**. The check
-expression imports `rt_runtime`, so it needs the package on `sys.path`; without
-that it cannot evaluate. Building and the tick are **unverified in the GUI** —
-they are checklist step 11.
+Assign a key in Houdini's Radial Menu Editor. The top item is **HoudiniRT**,
+right is **Pause / Resume RT**, bottom is **RT Turn**, and left is **RT Turn
+Cancel**. Checks reflect native renderer selection and pause state. Repeated
+commands during a pending request report the current request without issuing
+it again. Radial GUI interaction remains subject to the verification guide.
 
-## 5. Panel
+## Node and optional viewport HUD
 
-The Python Panel remains the source of truth for state, blockers and turn
-results. It is a pane tab, so it can sit beside the view but not over it.
+The [RT_TOGGLE node guide](../houdini/RT_TOGGLE_NODE.md) covers **Solaris Viewer**,
+**Render with HoudiniRT**, **Pause / Resume**, **Restore Previous Renderer**,
+and **Refresh Render State**. The node refreshes only on explicit actions;
+a saved checkbox or status text is not a live renderer indicator.
 
-## What SYNAPSE's architecture says about this layer
+**HUD recipe — untested in this milestone:** select the built node, drag its
+Enable, Pause, Restore or Refresh parameter into the viewport, then configure
+Persistent and Lock Placement in Houdini's handle menu. These are native
+parameter handles. Their behavior over the Vulkan viewport still needs a
+live check; no custom viewer overlay or new HUD API is provided here.
 
-The SYNAPSE reference implementation (`%USERPROFILE%\SYNAPSE`) settles several
-questions by rule rather than taste:
-
-- **UI observes; the host applies** (`AGENTS.md:136`). Surfaces call the
-  adapter; they never write runtime state themselves. Ours already does this.
-- **One owner per state** (`AGENTS.md:132`). The adapter owns toggle state; the
-  shelf, node and panel are thin readers. Do not let a HUD handle, a shelf tool
-  and the panel grow three copies of the truth.
-- **Honest seam** (`AGENTS.md:27`). An absent sidecar reports "not running",
-  never a false ON. The ABI refusal is the same discipline.
-- **Runtime is truth** (`AGENTS.md:41`). A documented API is not a working API.
-  Probe in the build before shipping a claim; that is why the HUD and Vulkan
-  questions are checks, not assertions.
-- **A test that can fail; flip only on user click** (`AGENTS.md:159`). No
-  auto-activation, and every check must have been watched going red.
-
-## What this document does not claim
-
-- That HUD handles render over the Vulkan viewport.
-- That the shelf icons draw at the intended size.
-- That any of the three turn controls has been clicked.
-
-All three are in `verification/GUI_CHECKS.md`, under **NOT RUN** until a
-person records a result.
+Current evidence and remaining manual checks are in
+[VIEWER_MILESTONE.md](../verification/VIEWER_MILESTONE.md). Older turn-service
+checklists describe the optional assistant, not renderer-control acceptance.

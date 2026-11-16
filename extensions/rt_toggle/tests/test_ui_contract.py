@@ -174,13 +174,13 @@ def test_panel_file_is_installable_xml():
     assert not problems, "Python panel contract violations:\n  " + "\n  ".join(problems)
 
 
-def test_panel_script_uses_adapter():
+def test_panel_script_uses_render_controller():
     _skip_without(PYPANELS, ".pypanel")
     problems: list[str] = []
     for path in PYPANELS:
         text = _read(path)
-        if "get_adapter" not in text:
-            problems.append(f"{path.name}: script never calls get_adapter")
+        if "get_render_controller" not in text:
+            problems.append(f"{path.name}: script never calls get_render_controller")
         if not any(marker in text for marker in TOGGLE_DRIVE):
             problems.append(
                 f"{path.name}: script never drives the adapter "

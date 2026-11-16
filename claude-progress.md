@@ -1,9 +1,45 @@
 # Progress
 
+## 2026-11-16 — integrated viewer controls
+
+- Combined the renderer integration baseline with the consolidated Python
+  extension in one working branch. The primary HoudiniRT action now controls
+  the selected Solaris viewer; assistant diagnostics remain optional.
+- Added one session controller shared by panel, shelf, radial and node:
+  native state readback, nonblocking pause/resume confirmation, per-viewer
+  ownership, previous renderer/pause restoration, external takeover handling,
+  bounded errors and retry after partial restoration. No load/cook activation.
+- Actual Houdini 22.0.429 desktop smoke PASS: enable, pause, panel recreation,
+  resume, two-viewer isolation, then restoration to originally paused Karma
+  CPU. Fresh unchanged renderer built with the matching HDK; source/artifact
+  hashes and GUI receipts are in `build/m1-viewer/` (local, ignored).
+- Extension suite: Python 3.14 **377 passed, 1 skipped**; Python 3.12
+  **360 passed, 18 skipped**. Updated artist documentation and v0.2.0 release
+  metadata. Native renderer state is verified; pixel fidelity, convergence,
+  installed-user-preference discovery and radial/HUD GUI interaction retain
+  their separate verification scope. No sealed exam or renderer source edited.
+
+The earlier renderer milestone notes below are retained as history.
+
 ## Done
-- Step 1 code written: `src/furnace/furnace.comp`, `src/furnace/furnace_host.cpp`. Passes on Mesa llvmpipe (software Vulkan) with seeds 1, 7, 12345, validation clean, independent judge exit 0. Built there with g++; MSVC not yet tried.
+- Step 1 code written: `src/furnace/furnace.comp`, `src/furnace/furnace_host.cpp`. Passes on Mesa llvmpipe (software Vulkan) with seeds 1, 7, 12345, validation clean, independent judge exit 0.
+- **s1-furnace-4090 GREEN.** Builds under MSVC (`cl /std:c++17` via `vcvars64`, `glslangValidator -DFURNACE_TEX_LUTS`) and passes `verify/s1_furnace.sh` on the RTX 4090 (discrete GPU, type 2), validation layer silent (0 errors/warnings), independent judge exit 0. Verified locally across seeds 1, 23070, 999999: 72 rows, ≤8 byte-identical to the CPU reference (≤16 guard), largest |gpu−cpu| ≈ 0.006 within 3σ+0.001, MIS consistency < 1e-3.
+
+- **s2-rayquery GREEN.** `src/furnace/rayq_host.cpp` builds two BLASes (unit cube, occluder triangle) and one TLAS with instance masks 0x1 / 0x2; `src/furnace/rayq.comp` does hit distance, shadow blocking and a closed-box furnace with inline ray queries. Passes the sealed `verify/s2_rayquery.sh` on the RTX 4090 (discrete GPU, type 2), validation silent, independent judge exit 0. Verified locally across seeds 12345, 7, 999999: 24 hit rows to 1e-4, occlusion exact vs analytic barycentric test, furnace within 1% + 3σ of E/(1−ρ). BLAS/TLAS sequence adapted from `third_party/sascha_willems_vulkan` (MIT).
+
+- **s3-delegate-shell GREEN.** Written by Claude, by hand, at Joe's request; not by the night loop. `src/hdRT/` is a Hydra render delegate for Houdini 22.0.429: plugin + delegate + render pass + render buffer ported from OpenUSD hdEmbree (TOST), the step 2 Vulkan ray-query kernel refactored into `vkFurnace.*`, one compute shader `shaders/furnace.comp`. `husk -R HdRTRendererPlugin` renders the closed-box furnace on the RTX 4090 on an HdRenderThread, validation layer active with zero errors, parameters taken from the RenderSettings prim (5 of 5), image constant at the analytic value to half-float precision (worst 4.3e-4 relative), alpha 1. Open-wall controls through husk (`HOUDINIRT_DEBUG_OPEN_FACE`) put a black hole where the camera should see it. Passes the sealed `verify/s3_delegate.sh` on the RTX 4090. Stage 7 of that exam was amended and sealed again on 2026-10-06 on the owner's go: the first version demanded an EXR attribute, `husk:render_stats`, which husk writes only for delegates that have a `UsdRenderers.json` entry (Karma). How to build and run: `src/hdRT/README.md`.
 
 ## Current delta
-- s1-furnace-4090: make it build under MSVC and pass `verify/s1_furnace.sh` on the RTX 4090.
+- s3 is done. It was put on its branch by hand (Claude, on the owner's go, 2026-10-06) and merges only on the loop's trusted check. The Generator and the Scribe did not run for it; its lessons are in `DECISIONS.md` under 2026-10-06.
+- The Solaris live-pause check owed since s3 was done by Joe on 2026-11-11 (DECISIONS.md).
+- **s4-first-light in progress** (Claude Code session, branch `claude/s4-first-light`, worktree `_work/s4-claude`; Joe seals the exam, frozen sha256 5bd6027f…f3d4). Done: **C2** `HdRTMesh` (`mesh.*`: points, topology, transform, visibility, constant displayColor; `HdMeshUtil::ComputeTriangleIndices`; `Hd_SmoothNormals` always; points/topology mismatch published empty with a warning; instanced meshes warn) and **C3** `HdRTLight` dome (`light.*`: radiance = intensity * 2^exposure * color), both publishing into the CPU-side `HdRTScene` (`scene.h`) carried by the render param. Against the frozen exam (real teapot): stages [0]-[6] pass; [7] stops on `hrt_bounces`. A debug husk run logs 2,482 triangles, the exact albedos and the dome radiance equal to the exam's truth to 6 digits.
+- Done: **C1** `houdinirt:bounces` (default 16, outside the drawn 6, 7, 9..12; the old `houdinirt:furnace:bounces` is gone) reported as `hrt_bounces`; **C4** `world.*` flattens the `HdRTScene` snapshot in Execute (positions by the transform in double, normals by its inverse transpose, mirrored transforms re-wound, per-triangle albedo, summed dome radiance) and the census goes out through GetRenderStats (`hrt_mesh_count`, `hrt_triangle_count`, `hrt_bbox_*`, the box only when there is one). Re-flattens only when a mesh or light changes (content version), not on a viewport resize. Against the frozen exam: [7] passes hrt_bounces and the census exactly (2 meshes, 2,482 triangles, box error 0) and stops at the 2x-dome linearity check: the GPU still draws the step 3 furnace.
+- Done: **C5** (`9e5c87e`) scene upload on the render thread (one BLAS + identity TLAS from the flattened mesh, 7 descriptor bindings, no dispatch without a scene) and the Lambertian path kernel under the uniform dome (`shaders/furnace.comp`); the step 3 furnace and its rho/emission/open-face settings are retired. **The frozen s4 exam passes on 8 of 8 nonces** (exit 0, validation silent): FLIP p99 0.0249-0.0444 against the 0.045 ceiling, level within 0.14%, alpha difference 0.00005-0.00007. Karma against itself measured 0.013-0.024, so the margin is thin: the worst 1% sits inside the surfaces near the image centre on every nonce.
+- Done: **C6** (`2667291`, `41f60b1`). Noise floor and A/B on nonce 101 with the exam's own FLIP: the delegate's noise is below Karma's (two seeds: FLIP 0.0159, rel RMS 0.0118 vs Karma's 0.0179 / 0.0187), so the thin margin was a bias, not noise; mirroring below-the-face samples back up added +0.1% and about 2% per-pixel residual. The kernel now ends such paths (about 1% residual left, level within 0.05%; DECISIONS.md). No stratification needed. Frozen exam on 8 nonces: all PASS, FLIP p99 0.019-0.031 (was 0.025-0.044), level <= 0.11%. Reviewer minors fixed (pause before upload, early stop, device limits, memory with fallback, harness ported to an analytic convex-cube check that passes, README).
+- Next: C7 provenance, then C8 landing with land_step.mts (the exam is sealed, d4a9c9d).
 
 ## Parked ideas (one line each)
+- s4: the flatten ignores render tags (proxy/guide); a viewport purpose toggle does not re-flatten. Record GetRenderTag() per mesh and filter in Execute (viewport work).
+- s3: a headless pause test (C++ against the HDK: render index, the delegate, Pause, watch `numCompletedSamples` stop) would replace the human viewport check.
+- s3: the running average is copied to the Hydra buffer on the CPU after every pass; move to a mapped device image when the viewport runs at full resolution.
+- s3: depth, primId and normal AOVs are cleared, never written. They need real geometry (s4).

@@ -1,177 +1,87 @@
-# RT_TOGGLE — the node-level on/off option
+# RT_TOGGLE — HoudiniRT node controls, v0.2
 
-**What this is.** `rt_node.py` builds one small null node named `RT_TOGGLE`
-with two spare parms and a Python parm callback. It is Houdini-scene furniture,
-not a panel: the switch lives in the network, saves with the `.hip`, and can be
-selected, referenced, expression-driven, or wrapped in an HDA.
+`rt_node.py` builds a null named `RT_TOGGLE` with spare parameters for the
+shared HoudiniRT viewer controller. The node provides explicit artist actions;
+its saved values do not own a renderer session or activate one on load/cook.
+The same session owner serves the panel, shelf and radial menu.
 
-The node type is the built-in `null`. Under `/obj` it resolves to Object/null;
-passed a geometry network as `parent`, it resolves to Sop/null. Both are exact
-type names in the 22.0.429 installed help
-(`help:22.0.429/nodes.zip/obj/null.txt`, `.../sop/null.txt`).
+## Build
 
----
-
-## Parms
-
-| Internal name | Label | Type | Behavior |
-|---|---|---|---|
-| `enable` | RT Runtime | Toggle | The request switch. Changing it runs the callback. |
-| `rt_status` | RT Status | String, locked | Result of the last change. Starts with `OFF`, `ON`, `REFUSED` or `ERROR`; anything after the ` \| ` separator is diagnostic detail (`state=… changed=…`, refusal reasons, or the exception). |
-
-The callback is stored on `enable` as a one-line Python script. It inserts the
-extension paths into `sys.path`, imports `rt_node`, and calls
-`rt_node.toggle_callback(kwargs)`.
-
----
-
-## How to run it
-
-Step 1 of 3 — make the extension importable in the Houdini Python Shell.
+After installing the extension, run in Houdini's Python Shell:
 
 ```python
-import sys
-sys.path.insert(0, r"<extension>\houdini")   # for rt_node
-sys.path.insert(0, r"<extension>")           # for rt_runtime
+import os, sys
+root = os.environ["RT_TOGGLE_ROOT"]
+sys.path.insert(0, root)
+sys.path.insert(0, os.path.join(root, "houdini"))
 import rt_node
+rt_node.build()
 ```
 
-Step 2 of 3 — build the node.
+This creates `/obj/RT_TOGGLE`. Passing a geometry network as `parent` creates
+a SOP null instead. Building again reuses the node and replaces its parameter
+templates without changing the viewer renderer. Callback scripts contain the
+extension paths from build time; rebuild after moving the extension.
 
-```python
-rt_node.build()          # creates /obj/RT_TOGGLE
-```
+## Renderer parameters
 
-Step 3 of 3 — select `/obj/RT_TOGGLE` and click the **RT Runtime** checkbox.
-The status parm reports the outcome immediately.
+| Internal name | Artist label | Behavior |
+|---|---|---|
+| `rt_viewer` | Solaris Viewer | Target Scene Viewer pane name. |
+| `enable` | Render with HoudiniRT | Checked requests Enable; unchecked requests Off. |
+| `rt_pause` | Pause / Resume | Request the opposite native pause state. |
+| `rt_restore` | Restore Previous Renderer | Request Off, including retry after partial restoration. |
+| `rt_refresh` | Refresh Render State | Read the native renderer and pause state. |
+| `rt_status` | RT Status | Locked text from the last action or Refresh. |
 
-Until the `rt_runtime` package exists, pressing the toggle writes
-`ERROR | rt_runtime not importable (…)` and puts the checkbox back — the
-graceful refusal path, not a traceback in the shell.
+1. Open a Solaris Scene Viewer and display the intended scene.
+2. Enter its pane name in **Solaris Viewer**, as listed in the HoudiniRT panel.
+   An empty field uses the invoking viewer or the sole eligible viewer, then
+   saves the resolved name. Multiple eligible viewers require a clear target.
+3. Click **Refresh Render State** before relying on saved values.
+4. Check **Render with HoudiniRT** to enable the renderer in that viewer.
+5. Use **Pause / Resume** as needed.
+6. Uncheck Enable, or press **Restore Previous Renderer**, to restore the
+   renderer and pause state recorded when this session enabled HoudiniRT.
 
----
+The checkbox follows observed selection after each action: it remains checked
+when HoudiniRT is paused. It requests a direction rather than blindly inverting
+the renderer. An unreadable native state reports an error and preserves the
+previous checkbox; a failed Enable/Off request with no observation is reverted.
 
-## What a node toggle can do that a Python Panel cannot
+## Pending state and recovery
 
-- **Scene-scoped state.** The `enable` value, the `rt_status` text and the
-  callback script itself are saved inside the `.hip`. Two shots can carry two
-  independent switches.
-- **Network citizenship.** The node can be selected, referenced by expressions,
-  driven by a CHOP, included in an HDA, or wired into a larger tool.
-- **No panel lifecycle.** There is nothing to open or dock; it is a node in the
-  scene, so it is present exactly when the scene is.
+Native changes can finish asynchronously. **RT Status** reports a pending
+operation alongside the observed state. The checkbox never represents an
+unconfirmed desired state. The node has no polling timer: press **Refresh
+Render State** after the request completes, or use the live HoudiniRT panel.
+Repeated actions while a request is pending do not issue duplicate mutations.
+A request that remains unconfirmed for 10 seconds reports an error on readback.
 
-## What a node toggle cannot do
+An Off may restore the renderer but fail to restore its pause state. In that
+case the checkbox correctly shows Off while the session retains its recovery
+record. Press **Restore Previous Renderer** to retry; this button works even
+when the checkbox is already unchecked.
 
-1. **It is scene-scoped, not session-scoped.** The switch does not exist until
-   a node is built in a scene, and it does not follow the user into the next
-   `.hip` unless that file also contains the node. The Python Panel is a
-   session-wide control that can be opened with no scene at all.
-2. **It needs the extension on `sys.path`.** The callback is a saved string
-   containing absolute paths from build time. On a machine without those paths
-   (or after the extension moves), the press fails at import time. Re-run
-   `build()` after moving the extension to re-bake the paths.
-3. **A parm callback cannot run before the node exists.** The callback is
-   attached to `enable` by `build()`; it fires only on a value change after the
-   node and parm exist. It is not a startup hook: opening the `.hip` does not
-   run it, and there is no "restore the runtime on load" behavior.
-4. **It cannot show a live ABI verdict without extra parms.** A parm callback
-   runs only when a value changes. There is no polling, timer, or idle hook in
-   this node, so `rt_status` shows the verdict of the *last press*, not current
-   readiness. A live ABI verdict would need extra machinery: a Refresh button
-   parm plus verdict/detail string parms, or a session-level event callback —
-   none of which this two-parm node includes.
-5. **The checkbox is a request, not a mirror.** If the runtime is turned on or
-   off elsewhere, the checkbox does not update. It also treats every change as
-   "call `toggle()`": the contract offers no explicit set-on/set-off call, so
-   an out-of-band state change can make the next press move the runtime in the
-   direction opposite to the label.
-6. **Runtime state is not scene state.** The `.hip` saves what was asked
-   (the parm value and last reported status). Whatever `rt_runtime` did is not
-   restored by loading the file.
+Manual renderer changes relinquish the controller's restoration ownership.
+If HoudiniRT was selected outside these controls, Pause / Resume is available,
+but there is no recorded previous renderer: switch through the viewport menu.
+A closed, missing or ambiguous named viewer produces an error and does not
+silently redirect the action to another pane.
 
----
+## Saved scenes and optional assistant controls
 
-## The camera dropdown question
+The `.hip` saves parameter values and last status text. It does not save the
+session's renderer ownership, replay a request, or turn rendering on when
+opened. Refresh after loading and whenever another surface changes the viewer.
+Two nodes targeting the same viewer share the same session owner.
 
-**The viewport camera dropdown is not extensible.** There is no supported
-extension point for adding an entry to the camera menu, so this node is the
-"node" option the request asked for.
+The optional `rt_prompt`, `rt_run_turn`, `rt_cancel_turn` and `rt_turn_status`
+parameters remain available as **RT Prompt**, **Run Turn**, **Cancel Turn** and
+**RT Turn Status**. They control assistant turns independently of rendering.
 
----
-
-## Turning the script into an HDA
-
-**Recipe only — not executed in this task.**
-
-1. Run `rt_node.build()` in the scene you want to wrap.
-2. Select `/obj/RT_TOGGLE` and choose **Create Digital Asset**, or call the
-   documented HOM method (`docs:hom/hou/OpNode.md#createDigitalAsset`):
-
-   ```python
-   node = hou.node("/obj/RT_TOGGLE")
-   node.createDigitalAsset(
-       name="rt_toggle",
-       hda_file_name=r"$HOME/houdini22.0/hda/rt_toggle.hda",
-       description="RT Toggle",
-   )
-   ```
-
-3. The two spare parms become the HDA interface parms. `enable` keeps its
-   callback string; `rt_status` is the display parm.
-4. For a portable asset, move `toggle_callback` (and its helpers) into the
-   HDA's **PythonModule** section and point the `enable` callback at the
-   documented asset-module pattern:
-
-   ```python
-   hou.pwd().hdaModule().toggle_callback(kwargs)
-   ```
-
-   `hou.pwd()` returns the cooking node in a callback; `OpNode.hm()` /
-   `hdaModule()` are the documented way to reach the asset's Python module
-   (`docs:hom/locations.md#parameter_callback_scripts`).
-5. Install the resulting file anywhere with
-   `hou.hda.installFile(path)` (`docs:hom/hou/hda.md#installFile`).
-
-**HDA caveat.** On a locked asset instance, `Parm.lock(False)` raises
-`hou.PermissionError`. `_set_status` catches that and attempts the plain
-`Parm.set()` instead. Whether a locked HDA interface parm accepts that
-programmatic write is not stated in the local docs — it is part of the live
-check below.
-
----
-
-## Files
-
-- `extensions/rt_toggle/houdini/rt_node.py` — `build()`, `toggle_callback()`,
-  `callback_script()`, and the status helpers.
-- `extensions/rt_toggle/houdini/RT_TOGGLE_NODE.md` — this page.
-
-Expected layout for imports:
-
-```
-extensions/rt_toggle/          <- sys.path entry for rt_runtime
-    houdini/                   <- sys.path entry for rt_node
-        rt_node.py
-        RT_TOGGLE_NODE.md
-    rt_runtime/
-        session.py             (get_adapter(), built elsewhere)
-```
-
----
-
-## Verification status
-
-- **Documented:** every HOM name used — `hou.ToggleParmTemplate`,
-  `hou.StringParmTemplate`, `hou.ParmTemplateGroup`, `OpNode.parmTemplateGroup`,
-  `OpNode.setParmTemplateGroup`, `Parm.lock` / `Parm.isLocked`,
-  `script_callback` / `script_callback_language`, the callback `kwargs` keys
-  (`docs:hom/locations.md#parameter_callback_scripts`), and the `null` node
-  type names in obj and sop contexts.
-- **Recipe only:** `build()`, the HDA conversion, and the `.hip` round-trip
-  were not executed (no Houdini or hython run in this task).
-- **Needs a live Houdini check:** whether the revert in `_refuse` (a
-  programmatic `Parm.set()` on `enable`) re-enters the parm callback
-  synchronously. `_TOGGLE_IN_PROGRESS` blocks the synchronous case; a deferred
-  callback could fire a second `adapter.toggle()`. Run one refused toggle and
-  count the `toggle()` calls.
+Native parameter HUD handles are an optional, untested recipe; see
+[ARTIST_LAUNCH.md](../docs/ARTIST_LAUNCH.md). HDA conversion, locked-asset writes,
+HUD rendering and saved-scene round trips require separate live validation.
+Current renderer-control evidence and checks are in
+[VIEWER_MILESTONE.md](../verification/VIEWER_MILESTONE.md).

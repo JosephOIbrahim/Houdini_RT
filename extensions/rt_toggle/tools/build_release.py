@@ -75,6 +75,9 @@ REQUIRED_FILES = (
     "LICENSE",
     "rt_toggle.json",
     "rt_runtime/__init__.py",
+    "rt_runtime/render_session.py",
+    "houdini/rt_panel.pypanel",
+    "houdini/rt_shelf.shelf",
     "houdini/rt_node.py",
     "tests/conftest.py",
 )

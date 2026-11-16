@@ -1,4 +1,46 @@
-# RT Toggle — Houdini 22.0.429 install
+# HoudiniRT controls — Houdini 22 install
+
+## Renderer workflow (v0.2.0)
+
+The renderer controls do not require a Python sidecar or `HOUDINI_RT_ROOT`.
+Use the matching Houdini 22 renderer build and the extension from the same
+integrated source checkout. In Houdini, find your preferences directory with
+`hou.homeHoudiniDirectory()`.
+
+1. Build/stage the renderer using the repository's renderer instructions.
+   The plugin directory must contain `plugInfo.json`, `hdRT.dll` and
+   `shaders/furnace.spv`. Set `PXR_PLUGINPATH_NAME` to include that directory
+   before launching Houdini; preserve any existing plugin directories.
+2. Set `RT_TOGGLE_ROOT` to the absolute `extensions/rt_toggle` directory.
+   Copy `houdini/packages/rt_toggle.json` into the preferences `packages/`
+   directory. This exposes only the pure-Python extension to Houdini.
+3. Copy `houdini/rt_panel.pypanel` into preferences `python_panels/`.
+4. Copy `houdini/rt_shelf.shelf` and `houdini/rt_shelf.py` together into
+   preferences `toolbar/`. The icon paths use `RT_TOGGLE_ROOT`.
+5. Merge the single action item in `houdini/PaneTabTypeMenu.xml` into any
+   existing preferences menu supplement, or copy it when none exists.
+6. Restart Houdini. Open **New Pane Tab Type → HoudiniRT**, choose the intended
+   Solaris viewer, and click **Render with HoudiniRT**. Pause/Resume and Off
+   operate on that viewer. No runtime config or model connection is needed.
+
+The stable panel interface ID remains `RT_Toggle` to preserve saved desktops.
+The shelf adds Pause / Resume RT. `rt_radial.build()` registers the optional
+radial menu. The node recipe adds `rt_viewer`, `rt_pause` and `rt_refresh`.
+
+The panel reports selected/unpaused/paused state from HOM. It does not claim
+image completion or GPU health. If the renderer is missing, it reports that
+without starting a Python process. If it was already selected outside the
+controller, choose a previous renderer manually in Houdini's renderer menu;
+the controller cannot reconstruct an earlier choice.
+
+See `verification/VIEWER_MILESTONE.md` for the isolated GUI check and evidence.
+
+## Optional assistant runtime setup (earlier installation notes)
+
+The notes below concern the Python runtime and assistant diagnostics. They
+are not prerequisites for the renderer toggle added in v0.2.0. Earlier
+NOT RUN statements refer to their original runtime checks, not the new
+renderer milestone evidence.
 
 Packaging and install notes for the RT toggle extension. Written against SideFX
 documentation and the extension's own files; nothing in this file was executed

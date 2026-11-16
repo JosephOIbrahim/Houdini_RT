@@ -1,4 +1,4 @@
-"""HoudiniRT runtime ON/OFF Python Panel.
+"""Integrated HoudiniRT viewer controls and optional assistant diagnostics.
 
 This module is the readable copy of the script embedded in rt_panel.pypanel.
 The .pypanel is self-contained (the script lives in a CDATA block) so it can be
@@ -25,11 +25,12 @@ Contract used here (as implemented by rt_runtime):
     ActivationResult.ok / .state / .changed / .reasons / .error
     RuntimeAdapter.turn_control() -> TurnControl | None
 
-The turn section submits one turn with ``wait_ms=0`` (202, return immediately)
-and polls ``GET /turn/<id>`` on a Qt timer. It never blocks on a turn.
+Primary render controls call the shared render-session controller on the Houdini
+thread. They never start or probe a Python sidecar. The legacy assistant section
+is constructed only when explicitly opened; its transport is synchronous.
 
-This widget makes no hou calls. Everything it knows about the runtime comes
-from the adapter. Attribute lookups are deliberately tolerant (several alias
+The assistant diagnostics obtain runtime information from the adapter.
+Attribute lookups are deliberately tolerant (several alias
 names per field) so a small field-name change in the adapter cannot break the
 panel; the alias tuples below are the single place to adjust.
 """
@@ -51,7 +52,7 @@ except Exception:  # pragma: no cover - older Houdini
 # Constants
 # ---------------------------------------------------------------------------
 
-PANEL_TITLE = "HOUDINIRT RUNTIME"
+PANEL_TITLE = "ASSISTANT DIAGNOSTICS"
 
 STATE_OFF = "OFF"
 STATE_ON = "ON"
@@ -239,11 +240,11 @@ def _exc_text(limit=600):
 # Widget
 # ---------------------------------------------------------------------------
 
-class RT_TogglePanel(QtWidgets.QWidget):
-    """Large ON/OFF switch plus the runtime's probe readout."""
+class RuntimeDiagnosticsPanel(QtWidgets.QWidget):
+    """Optional legacy assistant service controls, independent of rendering."""
 
     def __init__(self, parent=None):
-        super(RT_TogglePanel, self).__init__(parent)
+        super(RuntimeDiagnosticsPanel, self).__init__(parent)
         self._state = STATE_OFF
         self._busy = False
         self._adapter_ok = False
@@ -854,6 +855,215 @@ class RT_TogglePanel(QtWidgets.QWidget):
 # ---------------------------------------------------------------------------
 # Python Panel hooks
 # ---------------------------------------------------------------------------
+
+class RT_TogglePanel(QtWidgets.QWidget):
+    """One artist workflow, with observed state for an explicitly targeted viewer."""
+
+    def __init__(self, parent=None, controller=None):
+        super(RT_TogglePanel, self).__init__(parent)
+        if controller is None:
+            from rt_runtime.render_session import get_render_controller
+            controller = get_render_controller()
+        self._render_controller = controller
+        self._viewer = None
+        self._viewer_list = ()
+        self._last_action_error = ""
+        self._diagnostics = None
+        self._build_render_ui()
+        self._refresh_render_viewers(initial=True)
+        self._render_timer = QtCore.QTimer(self)
+        self._render_timer.setInterval(500)
+        self._render_timer.timeout.connect(self._refresh_render_viewers)
+        self._render_timer.start()
+
+    def _build_render_ui(self):
+        self.setObjectName("houdinirt_panel")
+        self.setMinimumWidth(300)
+        outer = QtWidgets.QVBoxLayout(self)
+        self._outer_layout = outer
+        title = QtWidgets.QLabel("HoudiniRT")
+        font = title.font()
+        font.setBold(True)
+        font.setPointSize(16)
+        title.setFont(font)
+        outer.addWidget(title)
+        self._viewer_combo = QtWidgets.QComboBox()
+        self._viewer_combo.setObjectName("rt_target_viewer")
+        self._viewer_combo.setToolTip("Choose the Solaris Scene Viewer controlled by this panel.")
+        self._viewer_combo.currentIndexChanged.connect(self._on_viewer_selected)
+        form = QtWidgets.QFormLayout()
+        form.addRow("Target viewer", self._viewer_combo)
+        self._renderer_label = QtWidgets.QLabel("—")
+        self._renderer_label.setObjectName("rt_actual_renderer")
+        form.addRow("Selected renderer", self._renderer_label)
+        self._render_state_label = QtWidgets.QLabel("Choose a Solaris viewer")
+        self._render_state_label.setObjectName("rt_render_state")
+        form.addRow("State", self._render_state_label)
+        outer.addLayout(form)
+        self._render_toggle = QtWidgets.QPushButton("Render with HoudiniRT")
+        self._render_toggle.setObjectName("rt_render_toggle")
+        self._render_toggle.setMinimumHeight(44)
+        self._render_toggle.clicked.connect(self._on_render_toggle)
+        outer.addWidget(self._render_toggle)
+        row = QtWidgets.QHBoxLayout()
+        self._render_pause = QtWidgets.QPushButton("Pause")
+        self._render_pause.setObjectName("rt_render_pause")
+        self._render_pause.clicked.connect(self._on_render_pause)
+        refresh = QtWidgets.QPushButton("Refresh")
+        refresh.setObjectName("rt_render_refresh")
+        refresh.clicked.connect(self._refresh_render_viewers)
+        row.addWidget(self._render_pause)
+        row.addWidget(refresh)
+        outer.addLayout(row)
+        self._render_message = QtWidgets.QLabel("")
+        self._render_message.setWordWrap(True)
+        self._render_message.setObjectName("rt_render_message")
+        outer.addWidget(self._render_message)
+        self._render_error = QtWidgets.QLabel("")
+        self._render_error.setWordWrap(True)
+        self._render_error.setObjectName("rt_render_error")
+        outer.addWidget(self._render_error)
+        note = QtWidgets.QLabel(
+            "State follows Houdini's selected renderer and pause flag. "
+            "Image progress and renderer errors remain in the viewport."
+        )
+        note.setWordWrap(True)
+        outer.addWidget(note)
+        self._diagnostics_button = QtWidgets.QPushButton("Assistant diagnostics…")
+        self._diagnostics_button.setCheckable(True)
+        self._diagnostics_button.toggled.connect(self._show_diagnostics)
+        outer.addWidget(self._diagnostics_button)
+        outer.addStretch(1)
+
+    def _on_viewer_selected(self, index):
+        self._viewer = self._viewer_list[index - 1] if 0 < index <= len(self._viewer_list) else None
+        self._last_action_error = ""
+        self._refresh_render_state()
+
+    def _refresh_render_viewers(self, checked=False, *, initial=False):
+        try:
+            viewers = tuple(self._render_controller.viewers())
+            if initial:
+                try:
+                    self._viewer = self._render_controller.resolve_viewer()
+                except Exception:
+                    self._viewer = None
+            if viewers != self._viewer_list or initial:
+                previous = self._viewer
+                self._viewer_list = viewers
+                self._viewer_combo.blockSignals(True)
+                try:
+                    self._viewer_combo.clear()
+                    self._viewer_combo.addItem("Choose a Solaris viewer…")
+                    for viewer in viewers:
+                        self._viewer_combo.addItem(viewer.name())
+                    index = next((i + 1 for i, v in enumerate(viewers) if v == previous), 0)
+                    self._viewer_combo.setCurrentIndex(index)
+                    self._viewer = viewers[index - 1] if index else None
+                finally:
+                    self._viewer_combo.blockSignals(False)
+            self._refresh_render_state()
+        except Exception as exc:
+            self._render_toggle.setEnabled(False)
+            self._render_pause.setEnabled(False)
+            self._render_state_label.setText("Unavailable")
+            self._render_error.setText(str(exc))
+
+
+    def _refresh_render_state(self, status=None):
+        if self._viewer is None:
+            self._renderer_label.setText("—")
+            self._render_state_label.setText("No target viewer")
+            self._render_toggle.setText("Render with HoudiniRT")
+            self._render_toggle.setEnabled(False)
+            self._render_pause.setEnabled(False)
+            self._render_message.setText(
+                "Open a Solaris Scene Viewer and choose it above."
+                if not self._viewer_list else "Choose the viewer you want to control."
+            )
+            self._render_error.setText(self._last_action_error)
+            return
+        status = status or self._render_controller.status(self._viewer)
+        if status.error:
+            self._last_action_error = status.error
+        labels = {"active": "Active (unpaused)", "paused": "Paused", "off": "Off",
+                  "unavailable": "Unavailable", "error": "State unavailable"}
+        self._renderer_label.setText(status.renderer or "—")
+        self._render_state_label.setText(labels.get(status.state, status.state))
+        restoring = status.owned
+        active = status.active
+        pending_labels = {"enable": "Enabling HoudiniRT…", "pause": "Pausing…",
+                          "resume": "Resuming…", "restore": "Restoring previous renderer…"}
+        self._render_toggle.setText(
+            pending_labels[status.pending] if status.pending in ("enable", "restore")
+            else "Turn off — restore previous renderer" if restoring
+            else "HoudiniRT already selected" if active else "Render with HoudiniRT"
+        )
+        self._render_toggle.setEnabled(
+            not status.busy and
+            (restoring or (not active and status.state not in ("unavailable", "error")))
+        )
+        self._render_pause.setEnabled(not status.busy and active and status.state != "error")
+        self._render_pause.setText(
+            pending_labels[status.pending] if status.pending in ("pause", "resume")
+            else "Resume" if status.paused else "Pause"
+        )
+        message = status.message
+        if status.busy:
+            message += " Waiting for Houdini to confirm the change."
+        if restoring:
+            message += " Previous renderer: %s." % status.previous_renderer
+        elif active:
+            message += " Enabled outside this controller; no previous renderer recorded."
+        self._render_message.setText(message)
+        self._render_error.setText(status.error or self._last_action_error)
+
+    def _perform_render_action(self, command):
+        if self._viewer is None:
+            self._refresh_render_state()
+            return
+        try:
+            status = command(self._viewer)
+            self._last_action_error = status.error or ""
+            self._refresh_render_state(status)
+        except Exception as exc:
+            self._last_action_error = str(exc)
+            self._refresh_render_state()
+
+    def _on_render_toggle(self, checked=False):
+        self._perform_render_action(self._render_controller.toggle)
+
+    def _on_render_pause(self, checked=False):
+        self._perform_render_action(self._render_controller.toggle_pause)
+
+    def _show_diagnostics(self, visible):
+        if visible and self._diagnostics is None:
+            self._diagnostics = RuntimeDiagnosticsPanel(self)
+            self._outer_layout.insertWidget(self._outer_layout.count() - 1, self._diagnostics)
+        if self._diagnostics is not None:
+            self._diagnostics.setVisible(visible)
+            self._sync_diagnostics_timer(visible)
+
+    def _sync_diagnostics_timer(self, visible):
+        if self._diagnostics is None:
+            return
+        poller = self._diagnostics._turn_poller
+        if visible and poller is not None and not poller.done:
+            self._diagnostics._ensure_turn_timer()
+        else:
+            self._diagnostics._stop_turn_timer()
+
+    def hideEvent(self, event):
+        self._render_timer.stop()
+        self._sync_diagnostics_timer(False)
+        super(RT_TogglePanel, self).hideEvent(event)
+
+    def showEvent(self, event):
+        self._refresh_render_viewers()
+        self._render_timer.start()
+        self._sync_diagnostics_timer(self._diagnostics_button.isChecked())
+        super(RT_TogglePanel, self).showEvent(event)
+
 
 def onCreateInterface():
     """Build a fresh widget for each panel instance."""

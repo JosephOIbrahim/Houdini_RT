@@ -52,6 +52,7 @@ REQUIRED_FILES = [
     "LICENSE",
     "rt_toggle.json",
     "rt_runtime/__init__.py",
+    "rt_runtime/render_session.py",
     "rt_runtime/adapter.py",
     "rt_runtime/compat.py",
     "rt_runtime/session.py",

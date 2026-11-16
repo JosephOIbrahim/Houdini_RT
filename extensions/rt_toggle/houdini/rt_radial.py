@@ -1,9 +1,10 @@
-"""RT radial menu — runtime controls at the mouse.
+"""RT radial menu — integrated renderer controls at the mouse.
 
-Creates (or rebuilds) a radial menu named ``RT`` with three actions:
+Creates (or rebuilds) a radial menu named ``RT`` with four actions:
 
-* **RT Toggle** at the top, with a check that reflects the sidecar state.
-* **RT Turn** on the right.
+* **HoudiniRT** at the top, checked when the target viewer selects HoudiniRT.
+* **Pause / Resume RT** on the right, checked when that renderer is paused.
+* **RT Turn** at the bottom (optional assistant).
 * **RT Turn Cancel** on the left.
 
 Radial menus are supported in the **3D viewer and the network editor**, and a
@@ -28,9 +29,8 @@ tested on a plain CPython.
 
 Caveats, stated rather than hidden:
 
-* The check expression imports ``rt_runtime``; if the package is not on
-  ``sys.path`` (for example a copy install without the package JSON), the
-  expression cannot evaluate.
+* State checks resolve the same viewer as actions. Missing imports or an
+  unavailable/ambiguous viewer leave the check unticked.
 * Building the menu registers it for the session. Pass ``save_path`` to write
   it to a ``.radialmenu`` file, and assign a key in the Radial Menu Editor.
 * None of this is exercised in the GUI yet; see ``verification/GUI_CHECKS.md``.
@@ -41,19 +41,26 @@ from __future__ import annotations
 import os
 
 MENU_NAME = "RT"
-MENU_LABEL = "RT Runtime"
+MENU_LABEL = "HoudiniRT"
 
 #: Menu item specs: location, label, icon file, whether it carries a check.
 ITEMS = (
     {
         "location": "Top",
-        "label": "RT Toggle",
+        "label": "HoudiniRT",
         "icon": "rt_toggle.svg",
         "action": "toggle_from_shelf",
         "check": True,
     },
     {
         "location": "Right",
+        "label": "Pause / Resume RT",
+        "icon": "rt_toggle.svg",
+        "action": "pause_from_shelf",
+        "check": True,
+    },
+    {
+        "location": "Bottom",
         "label": "RT Turn",
         "icon": "rt_turn.svg",
         "action": "turn_from_shelf",
@@ -71,10 +78,7 @@ ITEMS = (
 #: Expression for the ticked state. Self-contained: the expression namespace is
 #: not documented, so it imports what it needs and tolerates a status object
 #: without a ``name``.
-CHECK_EXPRESSION = (
-    "getattr(__import__('rt_runtime').session.get_adapter().status(), "
-    "'name', '') == 'ON'"
-)
+_PANE_EXPRESSION = "globals().get('kwargs', {}).get('pane')"
 
 
 def module_dir() -> str:
@@ -95,23 +99,30 @@ def icon_path(filename: str) -> str:
 def action_script(action: str, directory: str | None = None) -> str:
     """Python source for one item: put rt_shelf on the path, then call it."""
     folder = module_dir() if directory is None else directory
+    argument = (
+        "viewer=" + _PANE_EXPRESSION
+        if action in ("toggle_from_shelf", "pause_from_shelf") else ""
+    )
     return (
         "import sys; "
         "_rt_dir = {folder!r}; "
         "(_rt_dir in sys.path) or sys.path.insert(0, _rt_dir); "
-        "import rt_shelf; rt_shelf.{action}()"
-    ).format(folder=folder, action=action)
+        "import rt_shelf; rt_shelf.{action}({argument})"
+    ).format(folder=folder, action=action, argument=argument)
 
 
-def runtime_is_on() -> bool:
-    """Convenience for a GUI check; never raises."""
-    try:
-        from rt_runtime import session
+def check_expression(paused=False):
+    """Build a safe state check using the same target resolver as the action."""
+    folder = module_dir()
+    helper = "render_is_paused" if paused else "render_is_on"
+    return (
+        "(None if {folder!r} in __import__('sys').path else "
+        "__import__('sys').path.insert(0, {folder!r}), "
+        "__import__('rt_shelf').{helper}(viewer={pane}))[1]"
+    ).format(folder=folder, helper=helper, pane=_PANE_EXPRESSION)
 
-        state = session.get_adapter().status()
-    except Exception:
-        return False
-    return str(getattr(state, "name", "")).upper() == "ON"
+
+CHECK_EXPRESSION = check_expression()
 
 
 def build(save_path: str | None = None):
@@ -135,7 +146,10 @@ def build(save_path: str | None = None):
             location,
             label=spec["label"],
             icon=icon_path(spec["icon"]),
-            check=CHECK_EXPRESSION if spec["check"] else None,
+            check=(
+                check_expression(paused=spec["action"] == "pause_from_shelf")
+                if spec["check"] else None
+            ),
             script=action_script(spec["action"]),
         )
 

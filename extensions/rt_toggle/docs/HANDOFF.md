@@ -1,5 +1,11 @@
 # RT Toggle — session hand-off (2026-11-12)
 
+> Historical sidecar handoff, retained as recorded on 2026-11-12. Its toggle,
+> state and release claims describe the optional assistant workflow before
+> v0.2. For the current integrated renderer controls, use the
+> [README](../README.md) and
+> [viewer milestone verification](../verification/VIEWER_MILESTONE.md).
+
 Latest main: **`v0.1.7`** release commit, tagged `v0.1.7`. Published tags:
 `v0.1.7`, `v0.1.6`, `v0.1.5`, `v0.1.4`, `v0.1.3`, `v0.1.2`, `v0.1.1`, `v0.1.0`.
 Repo: `%RT_TOGGLE_ROOT%` (`Houdini_RT/extensions/rt_toggle`)

@@ -1,3 +1,15 @@
+# v0.2.0 integrated viewer controls
+
+The approved first artist milestone is implemented by `render_session.py`:
+native per-viewer selection, observed selected/paused state, pause/resume and
+owned restoration of the previous renderer and pause flag. All surfaces share
+one process controller. No scene writes or assistant service activation are
+part of renderer selection. External renderer changes relinquish ownership;
+failed restoration retains its record for retry. The earlier runtime design
+below remains applicable to the optional assistant implementation only.
+
+---
+
 # RT Toggle — Design
 
 Status: scaffold design. Nothing in this document was executed in Houdini.

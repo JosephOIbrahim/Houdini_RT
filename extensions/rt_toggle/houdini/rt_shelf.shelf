@@ -2,7 +2,7 @@
 <!--
   HoudiniRT shelf set.
 
-  Shelf set "RT", one shelf "RT", one tool "rt_toggle".
+  Shelf set "RT": viewer rendering and optional assistant commands.
 
   Install: put this file's folder (the extension's houdini/ folder) on
   HOUDINI_TOOLBAR_PATH; its parent holds rt_runtime, found automatically. Or
@@ -10,7 +10,7 @@
   RT_TOGGLE_ROOT to the extension root, because rt_runtime is not there then.
 
   The tool's label and icon are static: Houdini 22.0.429 documents no per-state
-  dynamic label or icon for shelf tools. The runtime state is reported in the
+  dynamic label or icon for shelf tools. Observed viewer state is reported in the
   status bar, on stdout, and in the HoudiniRT Python Panel.
 
   The script here is a bootstrap: it locates rt_shelf.py next to this file (or
@@ -25,21 +25,20 @@
 
   <toolshelf name="RT" label="RT">
     <memberTool name="rt_toggle"/>
+    <memberTool name="rt_pause"/>
     <memberTool name="rt_turn"/>
     <memberTool name="rt_turn_cancel"/>
   </toolshelf>
 
-  <tool name="rt_toggle" label="RT Toggle" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_toggle.svg">
+  <tool name="rt_toggle" label="HoudiniRT" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_toggle.svg">
     <helpText><![CDATA[
-      Toggle the HoudiniRT runtime on or off.
-
-      Calls rt_runtime.session.get_adapter().toggle() and reports one status
-      line. The button label and icon are static; the ON/OFF state appears in
-      the status bar, on stdout, and in the HoudiniRT Python Panel.
+      Render with HoudiniRT in the invoking Solaris viewer. Switch Off to
+      restore that viewer's previous renderer. The panel and status bar show
+      the observed renderer and pause state. Multiple viewers require an
+      explicit target; this never starts the optional Python assistant.
     ]]></helpText>
     <toolMenuContext name="viewer">
-      <contextNetType>OBJ</contextNetType>
-      <contextNetType>SOP</contextNetType>
+      <contextNetType>LOP</contextNetType>
     </toolMenuContext>
     <script scriptType="python"><![CDATA[
 import os
@@ -95,7 +94,81 @@ def _load_rt_shelf():
 
 
 try:
-    _load_rt_shelf().toggle_from_shelf()
+    _load_rt_shelf().toggle_from_shelf(viewer=kwargs.get("pane"))
+except Exception:
+    _detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
+    print("HoudiniRT: shelf bootstrap failed - " + _detail)
+    try:
+        import hou
+        hou.ui.setStatusMessage(
+            "HoudiniRT: shelf bootstrap failed - " + _detail,
+            hou.severityType.Error,
+        )
+    except Exception:
+        pass
+    ]]></script>
+  </tool>
+
+  <tool name="rt_pause" label="Pause / Resume RT" icon="$RT_TOGGLE_ROOT/houdini/icons/rt_toggle.svg">
+    <helpText><![CDATA[Pause or resume HoudiniRT in the invoking Solaris viewer. This does not stop the assistant or rebuild the scene.]]></helpText>
+    <toolMenuContext name="viewer">
+      <contextNetType>LOP</contextNetType>
+    </toolMenuContext>
+    <script scriptType="python"><![CDATA[
+import os
+import sys
+import traceback
+
+# No machine-specific path is baked in. Resolution is environment-derived:
+# RT_TOGGLE_ROOT first, then the folder that holds this .shelf as found on
+# HOUDINI_TOOLBAR_PATH. REPO stays empty; set RT_TOGGLE_ROOT when the extension
+# lives somewhere those two do not cover.
+REPO = ""
+
+
+def _candidates():
+    folders = []
+    root = os.environ.get("RT_TOGGLE_ROOT") or ""
+    if root:
+        root = os.path.normpath(root)
+        folders.extend([os.path.join(root, "houdini"), root])
+    # Each HOUDINI_TOOLBAR_PATH entry is a folder that holds .shelf files, so it
+    # is also where rt_shelf.py sits when the pair is copied to the user's
+    # toolbar folder. Its parent is the extension root when that folder itself
+    # is on the path. A copy install also needs RT_TOGGLE_ROOT, because
+    # rt_runtime stays in the extension tree.
+    for entry in (os.environ.get("HOUDINI_TOOLBAR_PATH") or "").split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+        entry = os.path.normpath(entry.rstrip("\\/"))
+        folders.extend([entry, os.path.dirname(entry)])
+    if REPO:
+        folders.extend([os.path.join(REPO, "houdini"), REPO])
+    return folders
+
+
+def _load_rt_shelf():
+    try:
+        import rt_shelf
+        return rt_shelf
+    except Exception:
+        pass
+    for folder in _candidates():
+        if folder and os.path.isfile(os.path.join(folder, "rt_shelf.py")):
+            if folder not in sys.path:
+                sys.path.insert(0, folder)
+            import rt_shelf
+            return rt_shelf
+    raise ImportError(
+        "rt_shelf.py not found (checked RT_TOGGLE_ROOT and "
+        "HOUDINI_TOOLBAR_PATH; keep rt_shelf.py beside this .shelf, "
+        "or set RT_TOGGLE_ROOT)"
+    )
+
+
+try:
+    _load_rt_shelf().pause_from_shelf(viewer=kwargs.get("pane"))
 except Exception:
     _detail = traceback.format_exc(limit=1).strip().splitlines()[-1]
     print("HoudiniRT: shelf bootstrap failed - " + _detail)

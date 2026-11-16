@@ -1,280 +1,96 @@
-<p align="center">
-  <img src="docs/rt-toggle-mark.svg" alt="RT Toggle" width="360">
-</p>
+# HoudiniRT controls — v0.2.0
 
-# RT Toggle
+One artist workflow for the HoudiniRT Hydra renderer in Houdini 22 / Solaris.
+The main toggle enables the renderer in the **chosen Scene Viewer**. It does
+not start a Python sidecar or require a model connection.
 
-**Houdini 22 runtime on/off for HoudiniRT — v0.1.7**
+## Artist workflow
 
-## The answer first
+1. Open the **HoudiniRT** Python Panel and choose a Solaris viewer.
+2. Click **Render with HoudiniRT**. The panel reads back the actual renderer.
+3. Use **Pause / Resume** to control that viewer's rendering.
+4. Click **Turn off — restore previous renderer** to return to the renderer
+   and pause state recorded when this controller enabled HoudiniRT.
 
-**Houdini 22.0.429 runs Python 3.13.10. HoudiniRT is a Python 3.14 distribution.**
+State is read from `currentHydraRenderer()` and `isRendererPaused()` every
+500 ms while the panel is visible. **Active (unpaused)** means exactly that;
+it is not a claim about first pixels, GPU success, sample count or convergence.
+Houdini's viewport remains the place to inspect image progress/errors.
+Houdini applies pause changes asynchronously. During a request the panel
+keeps showing the observed state, displays Pausing / Resuming / Restoring,
+and prevents duplicate commands until readback confirms the change. A
+10-second timeout exposes an error and keeps restoration available to retry.
 
-The toggle does **not** load the 3.14 tree into Houdini's interpreter. It guards
-it, refuses it, and runs it as a supervised sidecar instead.
+The same controller serves the shelf, radial menu and optional node. State
+survives panel recreation for the current Houdini process. Closing a panel
+does not switch renderers or stop another viewer's work.
 
-**What works today:** sidecar ON is proven live — `/health` returns 200 and a
-real `run_turn` returns complete. The in-process guard correctly refuses the
-cp314 tree. A 3.13 in-process sibling runtime is planned, not installed.
+## Targeting and ownership
 
-**Tests:** 277 pass on Python 3.14; 260 pass with skips on 3.12.
+- The panel uses its chosen viewer; it never retargets a running session when
+  the mouse moves. With several viewers, choose explicitly.
+- Shelf/radial actions use their invoking viewer. Without a supplied viewer,
+  the resolver uses the Solaris viewer under the cursor or the sole eligible
+  viewer. Ambiguity is reported rather than selecting the first pane.
+- The optional node has a target viewer name, Pause / Resume, Restore Previous
+  Renderer, and Refresh.
+  Its Enable control is directional; loading/cooking a node does not activate
+  rendering. Refresh reads current state into its controls, including after
+  a pending native request completes. Restore can retry a partial Off.
+- A manual renderer switch relinquishes restoration ownership. Off does not
+  overwrite that user choice.
+- If HoudiniRT was already enabled elsewhere, Pause / Resume remains usable;
+  no previous renderer is invented. Use the viewport renderer menu to switch.
+- A failed restoration keeps its recovery record so Off can be retried.
 
----
+## Install
 
-## What works today
+See [INSTALL.md](INSTALL.md). Install the host controls and stage the matching
+HoudiniRT renderer plugin. The existing Python Panel interface ID `RT_Toggle`
+is retained for desktop compatibility; its displayed label is **HoudiniRT**.
 
-- **Sidecar mode.** `activate()` starts a CPython 3.14 process with runtime-first
-  packages, waits for ready, checks `/health`, and reports ON. `deactivate()`
-  stops it gracefully.
-- **In-process guard.** Any attempt to load the full 3.14 `site-packages` under
-  Houdini's 3.13 interpreter is refused with the ABI blocker named. Refusal is a
-  designed outcome, not a crash.
-- **One turn at a time, from any surface.** The panel has a prompt field, a run
-  button and a cancel button; the shelf has **RT Turn** and **RT Turn Cancel**
-  tools; the node has `rt_prompt`, Run Turn and Cancel Turn. Every one submits
-  with `wait_ms=0` and polls `/turn/<id>`. The panel polls on a Qt timer and
-  never blocks; the shelf and node have no timer, so they poll for a bounded
-  window (`RT_TURN_POLL_S`, default 2 s) and leave the turn running after that.
-  Offline by default; `RT_SIDECAR_LIVE_MODEL=1` turns the same controls live.
-- **Three surfaces, one look.** The panel and the shelf’s three tools share a
-  small SVG icon family in `houdini/icons/`. A Python Panel (primary), a shelf
-  tool set (secondary), and an optional node. The viewport camera dropdown is
-  not an extension point.
-- **One adapter.** Every surface calls the same process-wide adapter, so they
-  share one lock, one state file and one set of path bookkeeping.
+Render controls need only the pure-Python `rt_runtime` extension and Houdini's
+native HOM APIs. Never expose a foreign Python `site-packages` tree to Houdini.
 
----
+## Assistant diagnostics
 
-## Install in 5 steps
+The existing assistant service controls and turn probe remain available under
+**Assistant diagnostics…**, constructed only when opened. They are optional,
+and their availability does not determine renderer state. Their existing
+in-process ABI refusal and sidecar configuration are unchanged. The legacy
+assistant transport still uses synchronous I/O and is not part of this
+milestone's responsive renderer-control path.
 
-Full detail, exact `hou` calls and uninstall are in **[INSTALL.md](INSTALL.md)**.
+## Implementation
 
-`%PREF%` = `hou.homeHoudiniDirectory()` (usually
-`%USERPROFILE%\Documents\houdini22.0`). `%HOUDINI_RT_ROOT%` = the HoudiniRT
-distribution root.
+`rt_runtime/render_session.py` owns per-pane restoration records and observes
+HOM state. Every control calls it on Houdini's main application thread. Native
+pane identity is used for ownership, not a persisted checkbox or a pane name.
+Renderer ownership stays in the session. The optional node mirrors observed
+state into its controls on actions/Refresh; no render control saves a HIP or
+runtime state file.
 
-1. **Make it importable.** Set `HOUDINI_RT_ROOT` to the external CPython root and
-   `RT_TOGGLE_ROOT` to this extension root in `%PREF%\houdini.env`; copy
-   `houdini/packages/rt_toggle.json` to `%PREF%\packages\`. Restart.
-2. **Install the panel.** Copy `houdini/rt_panel.pypanel` to
-   `%PREF%\python_panels\`. Keep the interface name `RT_Toggle`.
-3. **Install the shelf.** Copy `rt_shelf.shelf` and `rt_shelf.py` together to
-   `%PREF%\toolbar\`; set `RT_TOGGLE_ROOT` if the pair is copied out of the
-   extension.
-4. **Add the pane menu entry.** Copy `houdini/PaneTabTypeMenu.xml` to `%PREF%\`.
-   It is a supplement; merge the single `<actionItem>` if one already exists.
-5. **Open it.** Restart, choose **New Pane Tab Type → RT Toggle**, or click the
-   **RT Toggle** shelf button.
+The renderer and external Python runtime retain their implementation
+boundaries within one product. Render selection does not unload a plugin DLL,
+and Pause does not promise to release GPU memory.
 
-**Never** put `%HOUDINI_RT_ROOT%\Lib\site-packages` on `PYTHONPATH`, in a package
-JSON, in `houdini.env`, or in a startup script. The guard exists to keep it out.
+## Verification
 
-The icons resolve through `RT_TOGGLE_ROOT`. Set it explicitly; the package JSON
-uses it for `PYTHONPATH` but cannot discover it. Without it, imports and icons
-cannot resolve.
-
-For putting the controls over the viewport itself, see
-**[docs/ARTIST_LAUNCH.md](docs/ARTIST_LAUNCH.md)** — HUD handles are the native
-mechanism, and the recipe is there.
-
----
-
-## How it works
-
-```mermaid
-flowchart LR
-  subgraph Surfaces
-    P[Python Panel]
-    S[Shelf tool]
-    N[Node]
-  end
-
-  A[Adapter<br/>one lock · one state file]
-  G{Compatibility guard}
-  I[In-process<br/>matching interpreter]
-  D[Sidecar<br/>Python 3.14 process]
-  H[/health · status.json/]
-  R[REFUSED<br/>not a crash]
-
-  P --> A
-  S --> A
-  N --> A
-  A --> G
-  G -- safe --> I
-  G -- cp314 under 3.13 --> R
-  A -- mode: sidecar --> D
-  D --> H
-```
-
-**Boundaries.** Surfaces never touch `sys.path`. The adapter owns state. The
-guard makes the one safety decision. The sidecar is a separate process, not a
-second interpreter inside Houdini.
-
-## Activation
-
-```mermaid
-sequenceDiagram
-  participant H as Houdini (3.13)
-  participant A as rt_runtime
-  participant S as Sidecar (3.14)
-  participant API as /health
-
-  H->>A: activate()
-  A->>A: preflight + ABI guard
-  alt in-process, cp314 under 3.13
-    A-->>H: REFUSED · OFF · changed=false
-  else sidecar mode, runtime-first
-    A->>S: start supervisor
-    S-->>A: status.json = ready
-    A->>API: GET /health
-    API-->>A: 200 · ok · pid · python 3.14
-    A-->>H: ON
-  end
-```
-
----
-
-## Runtime configuration
-
-`rt_toggle.json` at the extension root names the target. `$HOUDINI_RT_ROOT` and
-`${HOUDINI_RT_ROOT}` name the external CPython distribution; other relative paths
-resolve against that file's folder.
-
-```json
-{
-  "version": 1,
-  "default": "houdini_rt",
-  "targets": {
-    "houdini_rt": {
-      "home": "$HOUDINI_RT_ROOT",
-      "python_version": "3.14",
-      "site_packages": "${HOUDINI_RT_ROOT}/Lib/site-packages",
-      "allow_pure_python_only": false
-    }
-  }
-}
-```
-
-Add `"mode": "sidecar"` plus a `sidecar` block to run the 3.14 process instead of
-touching `sys.path`. The block carries the launcher, host script, state folder,
-package precedence, timeouts and `entry_point`. A complete two-target example is
-`verification/rt_toggle_sidecar.json`: its default is the sidecar target, and
-its second target exists to prove the in-process refusal.
-
-For an isolated check, point `RT_TOGGLE_CONFIG` at that file before launching
-Houdini. `get_adapter()` then uses it, with state beside the config, rather than
-editing the extension's default target.
-
-**Package precedence.** `runtime-first` is the default and wins imports. Base-first
-is available only with `"allow_degraded_base_first": true`, and every result is
-labelled `DEGRADED`.
-
----
-
-## ABI policy
-
-`rt_runtime/compat.py` compares the host ABI with the target's declared Python and
-scans filenames for ABI-specific binaries. It never imports what it inspects.
-
-**Strict by default.** A target whose declared version differs from the host is
-refused, even with no compiled files. Under Houdini's `cp313`, the default 3.14
-target is refused with the mismatch named.
-
-**Opt-in per target.** `"allow_pure_python_only": true` permits a mismatch only
-when the scan finds no compiled modules, with a warning that 3.14-only syntax or
-stdlib APIs may still fail.
-
----
-
-## Sidecar: what ON means
-
-- A supervised CPython 3.14 process, started with the runtime tree in front.
-- A lock, a heartbeat and an atomically written `status.json`.
-- A loopback HTTP control surface with a per-launch token: `/health`, `/status`,
-  `/shutdown`, and a turn service — `POST /turn`, `GET /turn/<id>`,
-  `POST /cancel`. One turn at a time, cooperative cancel, bounded results.
-- `entry_point` reaches the host as `--entry-point`. The host invokes a no-arg
-  target, a one-context target, or the `run_turn` shape with a guarded client and
-  dispatcher.
-- The default probe is offline. `RT_SIDECAR_LIVE_MODEL=1` uses the configured
-  Anthropic endpoint and returns a real `AgentTurnResult`.
-
----
-
-## Tests
+Run the extension suite with the runtime interpreter:
 
 ```powershell
-py -3.12 -m pytest tests -q -p no:cacheprovider
+& "$env:HOUDINI_RT_ROOT/python.exe" -B -m pytest tests -q -p no:cacheprovider
 ```
 
-- **Python 3.12 (local, Windows):** 260 passed, 18 skipped (3.14-only sidecar
-  lifecycle tests, plus the POSIX permission test).
-- **Python 3.14 (local, Windows):** 277 passed, 1 skipped (the POSIX
-  permission test).
-- **Latest recorded CI before this change:** 230 passed, 17 skipped on Ubuntu
-  3.12 and 3.13; 244 passed, 3 skipped on Windows 3.14. Run `43301551119` at
-  `cfc81da`; all four jobs passed.
+`tests/test_render_session.py` covers native readback, multi-viewer ownership,
+external switches, partial failures, restoration and main-thread access.
+`test_render_surfaces.py` and `test_render_panel.py` exercise targeting and UI
+state. `verification/gui_viewer_smoke.py` is an opt-in isolated Houdini GUI
+test that clicks the actual panel and records native readback. See
+[the milestone verification guide](verification/VIEWER_MILESTONE.md) for scope
+and the exact evidence requirements.
 
-The local and CI counts differ by host, not by code: local runs have `synapse`
-available, Ubuntu runs the POSIX permission test that Windows skips, and the
-Windows runner has no `synapse`. Current CI figures are recorded after the run
-at this release commit.
+The earlier runtime verification documents remain historical records; they
+do not establish the renderer-control behavior added in v0.2.0.
 
-The suite needs no Houdini; `tests/fake_hou.py` stands in for `hou`.
-
----
-
-## Proven vs untested
-
-**Proven live in hython 22.0.429:**
-
-- The panel installs; `interfaceByName("RT_Toggle")` resolves.
-- The cp314 target is refused: `safe=false`, 108 blockers (104 before the
-  2026-11-11 repair), no cp314 import.
-- The shelf XSD validates; the tool script reports one refusal line.
-- The node builds and its callback function writes REFUSED and reverts.
-- The state file survives restart, reports ERROR, re-activates, and deactivates.
-- The pane-menu supplement has one item at the right anchor.
-- RT-first sidecar: ON, `/health` 200, `run_turn` complete, graceful OFF.
-
-**Manual, not machine-verified:**
-
-- Pane render, shelf click, parm event dispatch, gear-menu duplicate and uninstall.
-- The panel's turn control has not been clicked in Houdini. The client and
-  poller are tested against a real loopback server, and the widget wiring is
-  checked statically; the click itself is still a person.
-- The planned 3.13 in-process sibling runtime (G8) — no tree has been installed.
-- A network model turn without credentials; the offline probe is the default.
-
-`verification/MATRIX.md` and `INSTALL_CHECKS.md` keep the per-check status.
-
----
-
-## Layout
-
-```
-rt_toggle/
-├─ README.md
-├─ INSTALL.md · DESIGN.md · CHANGELOG.md
-├─ rt_toggle.json
-├─ rt_runtime/
-│  ├─ adapter.py · compat.py · session.py
-│  ├─ sidecar_adapter.py
-│  └─ sidecar/                host, supervisor, loopback transport
-├─ houdini/                   panel, shelf, node, pane menu, package
-├─ docs/
-│  ├─ CLAIMS_VS_REFERENCE.md
-│  └─ rt-toggle-mark.svg
-├─ tests/
-└─ verification/
-```
-
-The state file `.rt_toggle_state.json` is generated at runtime and is not tracked.
-
-## License
-
-Apache-2.0. See [LICENSE](LICENSE). The license ships in the release archive.
-
----
-
-*RT Toggle v0.1.7 · Myth and Logic*
+Apache-2.0. See [LICENSE](LICENSE).

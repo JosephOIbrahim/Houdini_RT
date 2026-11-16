@@ -46,10 +46,11 @@ def node_surface():
 
 def _result(state):
     return SimpleNamespace(
-        ok=True,
         state=state,
-        changed=True,
-        reasons=(),
+        active=state in ("active", "paused"),
+        viewer_name="solaris",
+        renderer="HoudiniRT" if state in ("active", "paused") else "Karma XPU",
+        message="Observed native viewer state",
         error="",
     )
 
@@ -58,31 +59,34 @@ class _DirectionalAdapter:
     def __init__(self):
         self.calls = []
 
-    def activate(self):
-        self.calls.append("activate")
-        return _result("on")
+    def resolve_viewer(self, **kwargs):
+        return SimpleNamespace(name=lambda: "solaris")
 
-    def deactivate(self):
+    def activate(self, viewer):
+        self.calls.append("activate")
+        return _result("active")
+
+    def deactivate(self, viewer):
         self.calls.append("deactivate")
         return _result("off")
 
-    def toggle(self):
+    def toggle(self, viewer):
         self.calls.append("toggle")
         return _result("off")
 
 
 @pytest.mark.parametrize(
     "requested_on, expected_call, expected_status",
-    [(True, "activate", "ON"), (False, "deactivate", "OFF")],
+    [(True, "activate", "ACTIVE"), (False, "deactivate", "OFF")],
 )
 def test_node_toggle_uses_direction_and_result_state(
     node_surface, monkeypatch, requested_on, expected_call, expected_status
 ):
     """A stale checkbox must not invert the operation or lie about its state."""
-    from rt_runtime import session
+    from rt_runtime import render_session
 
     adapter = _DirectionalAdapter()
-    monkeypatch.setattr(session, "get_adapter", lambda: adapter)
+    monkeypatch.setattr(render_session, "get_render_controller", lambda: adapter)
 
     node = fake_hou.Node("RT_TOGGLE_TEST")
     enable = node.addParm(

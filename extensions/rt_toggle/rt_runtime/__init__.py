@@ -1,4 +1,4 @@
-"""HoudiniRT runtime toggle: a pure-Python on/off switch for the runtime.
+"""HoudiniRT host controls and optional Python runtime supervision.
 
 Public surface::
 
@@ -21,6 +21,7 @@ from .adapter import (
     load_targets,
 )
 from .session import get_adapter
+from .render_session import RenderController, RenderSessionError, RenderStatus, get_render_controller
 
 __all__ = [
     "ActivationResult",
@@ -29,6 +30,10 @@ __all__ = [
     "RuntimeTarget",
     "get_adapter",
     "load_targets",
+    "RenderController",
+    "RenderSessionError",
+    "RenderStatus",
+    "get_render_controller",
 ]
 
-__version__ = "0.1.7"
+__version__ = "0.2.0"

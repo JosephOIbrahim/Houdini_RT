@@ -1,41 +1,12 @@
-"""rt_node.py - Houdini-side on/off node for the HoudiniRT runtime.
+"""Native parameter controls for the HoudiniRT viewer session.
 
-Builds a small null node named ``RT_TOGGLE`` (an Object/null under ``/obj``,
-a Sop/null when the parent is a geometry network) carrying:
+The explicit Viewer parameter pins actions to a Solaris pane. Enable requests
+a direction, Pause/Resume and Refresh read the same shared render controller.
+Saved parameters are not live state: loading/cooking this null never activates
+a renderer. Refresh reads current native state. Assistant turn controls are
+retained as optional commands and do not determine renderer state.
 
-  * a toggle parm   ``enable``     labeled "RT Runtime"
-  * a string parm   ``rt_status``  labeled "RT Status" (read-only in the UI)
-  * a Python parm callback on ``enable`` that calls
-    ``rt_runtime.session.get_adapter().toggle()`` and writes the outcome into
-    ``rt_status``.
-
-Fixed contract (from the HoudiniRT scaffold):
-    rt_runtime.session.get_adapter() -> adapter
-    adapter.toggle()                 -> ActivationResult(ok, state, changed,
-                                                         reasons, error)
-
-Documented vs unverified (checked against the local SideFX corpus):
-  * ``hou.ToggleParmTemplate``, ``hou.StringParmTemplate``,
-    ``hou.ParmTemplateGroup`` (``append`` / ``find`` / ``replace``),
-    ``OpNode.parmTemplateGroup`` / ``OpNode.setParmTemplateGroup``,
-    ``Parm.lock`` / ``Parm.isLocked`` and the ``script_callback`` /
-    ``script_callback_language`` constructor arguments are documented
-    (docs:hom/hou/*.md).
-  * The callback ``kwargs`` keys (``parm``, ``node``, ``script_value`` ...)
-    are documented in docs:hom/locations.md#parameter_callback_scripts.
-  * NOT documented locally: whether ``Parm.set()`` still works on a *locked*
-    parm. ``_set_status`` therefore tries to unlock, write, and re-lock, and
-    falls back to a plain write when unlocking is refused (locked digital
-    asset). Treat that as the live-check item.
-  * NOT documented locally: whether a programmatic ``Parm.set()`` re-enters
-    the callback synchronously. ``_TOGGLE_IN_PROGRESS`` blocks the common
-    (synchronous) case; a deferred callback could still fire a second
-    ``toggle()``. Also a live-check item.
-  * ``ActivationResult.state``'s exact type is not fixed by the contract; it
-    is only formatted with ``repr()`` into the diagnostic tail of the status
-    string, never compared.
-
-No node or parm is created at import time. Call ``build()``.
+No node or parameter is created at import time. Call ``build()``.
 """
 
 import os
@@ -50,7 +21,11 @@ import hou
 NODE_NAME = "RT_TOGGLE"
 
 ENABLE_PARM = "enable"
-ENABLE_LABEL = "RT Runtime"
+ENABLE_LABEL = "Render with HoudiniRT"
+VIEWER_PARM = "rt_viewer"
+PAUSE_PARM = "rt_pause"
+RESTORE_PARM = "rt_restore"
+REFRESH_PARM = "rt_refresh"
 
 STATUS_PARM = "rt_status"
 STATUS_LABEL = "RT Status"
@@ -135,7 +110,7 @@ def _callback_call(function):
 # ---------------------------------------------------------------------------
 
 def build(parent=None, name=NODE_NAME):
-    """Create (or reuse) the RT_TOGGLE node and its two spare parms.
+    """Create or reuse the RT_TOGGLE node and its native render controls.
 
     ``parent`` may be ``/obj`` (default) or a geometry network. The node type
     is the built-in ``null``, which resolves to Object/null under /obj and
@@ -145,7 +120,7 @@ def build(parent=None, name=NODE_NAME):
     Safe to run twice: an existing node of that name is reused, and the parm
     templates are replaced in place. ``setParmTemplateGroup`` preserves the
     current values of same-named parms, so a rebuild does not fire the
-    callback and does not flip the runtime.
+    callback and does not change any viewer's renderer.
 
     Returns the ``hou.OpNode``.
     """
@@ -168,9 +143,9 @@ def build(parent=None, name=NODE_NAME):
             ENABLE_LABEL,
             default_value=False,
             help=(
-                "Turn the HoudiniRT runtime on or off. Calls "
-                "rt_runtime.session.get_adapter().toggle() and reports the "
-                "outcome in RT Status."
+                "Enable HoudiniRT in the named Solaris viewer; Off restores "
+                "its previous renderer. This checkbox is a request; use "
+                "Refresh to read live state after loading a scene."
             ),
             script_callback=callback_script(),
             script_callback_language=hou.scriptLanguage.Python,
@@ -187,16 +162,43 @@ def build(parent=None, name=NODE_NAME):
                     STATUS_PARM,
                     STATUS_LABEL,
                     1,
-                    default_value=(STATUS_OFF,),
+                    default_value=("Not checked; press Refresh",),
                     help=(
-                        "Read-only result of the last toggle. Starts with one "
-                        "of OFF, ON, REFUSED or ERROR; anything after the "
-                        "separator is diagnostic detail."
+                        "Observed renderer and pause state at the last action "
+                        "or Refresh. Saved text is not a live status signal."
                     ),
                 )
             )
 
-        # -- one turn ----------------------------------------------------
+        viewer_template = hou.StringParmTemplate(
+            VIEWER_PARM, "Solaris Viewer", 1, default_value=("",),
+            help=("Pane name shown in the HoudiniRT panel. Empty resolves the "
+                  "invoking viewer or the only Solaris viewer, then pins it."),
+            script_callback=_callback_call("refresh_render_callback"),
+            script_callback_language=hou.scriptLanguage.Python,
+        )
+        for key, template in (
+            (VIEWER_PARM, viewer_template),
+            (PAUSE_PARM, hou.ButtonParmTemplate(
+                PAUSE_PARM, "Pause / Resume", help="Pause/resume the named viewer.",
+                script_callback=_callback_call("pause_callback"),
+                script_callback_language=hou.scriptLanguage.Python)),
+            (RESTORE_PARM, hou.ButtonParmTemplate(
+                RESTORE_PARM, "Restore Previous Renderer",
+                help="Switch Off or retry an incomplete renderer/pause restoration.",
+                script_callback=_callback_call("restore_render_callback"),
+                script_callback_language=hou.scriptLanguage.Python)),
+            (REFRESH_PARM, hou.ButtonParmTemplate(
+                REFRESH_PARM, "Refresh Render State", help="Read native viewer state.",
+                script_callback=_callback_call("refresh_render_callback"),
+                script_callback_language=hou.scriptLanguage.Python)),
+        ):
+            if group.find(key) is None:
+                group.append(template)
+            else:
+                group.replace(key, template)
+
+        # -- optional assistant turn -------------------------------------
         prompt_template = hou.StringParmTemplate(
             TURN_PROMPT_PARM,
             TURN_PROMPT_LABEL,
@@ -266,72 +268,85 @@ def build(parent=None, name=NODE_NAME):
 # Parm callback
 # ---------------------------------------------------------------------------
 
-def toggle_callback(kwargs):
-    """Handle a change of the ``enable`` toggle.
+def _render_target(node, kwargs):
+    from rt_runtime.render_session import get_render_controller
 
-    ``kwargs`` is the documented callback dictionary
-    (docs:hom/locations.md#parameter_callback_scripts). ``kwargs["node"]`` is
-    the node holding the parm and ``kwargs["parm"]`` is the parm itself.
+    controller = get_render_controller()
+    parm = node.parm(VIEWER_PARM)
+    name = str(parm.eval()).strip() if parm is not None else ""
+    viewer = controller.resolve_viewer(
+        viewer=None if name else kwargs.get("pane"), viewer_name=name or None
+    )
+    # Pin automatic resolution so a later Off cannot target a different pane.
+    if parm is not None and not name:
+        parm.set(viewer.name())
+    return controller, viewer
 
-    The checkbox is treated as the *requested direction*: checked calls
-    ``adapter.activate()``, unchecked calls ``adapter.deactivate()``. The
-    returned result's state, not the requested direction, determines the status
-    and checkbox. On REFUSED / ERROR the checkbox is put back where it was, so
-    the UI does not claim a state the runtime did not grant.
-    """
+
+def _show_render_status(node, result):
+    enable = node.parm(ENABLE_PARM)
+    if enable is not None and result.state != "error":
+        _restore_enable(enable, result.active)
+    detail = result.error or result.message
+    pending = getattr(result, "pending", "")
+    if pending:
+        detail = "Pending {}: {}".format(pending, detail)
+    _set_status(node, "{} | {} | {} | {}".format(
+        result.state.upper(), result.viewer_name, result.renderer or "none", detail
+    ))
+
+
+def _render_callback(kwargs, action):
+    """Read/apply renderer state only on an explicit parameter action."""
     global _TOGGLE_IN_PROGRESS
-
     if _TOGGLE_IN_PROGRESS:
-        # The revert below sets ``enable``; that change re-enters here.
         return
-
     _TOGGLE_IN_PROGRESS = True
     try:
-        node = kwargs.get("node")
-        parm = kwargs.get("parm")
+        node = kwargs.get("node") or hou.pwd()
         if node is None:
-            node = hou.pwd()
-        if node is None or parm is None:
             return
-
-        requested_on = bool(parm.eval())
-
+        enable = node.parm(ENABLE_PARM)
+        requested = bool(enable.eval()) if enable is not None else False
         try:
-            from rt_runtime import session
-        except Exception as exc:
-            _refuse(
-                node,
-                parm,
-                requested_on,
-                STATUS_ERROR,
-                "rt_runtime not importable ({}); expected it under {}".format(
-                    exc, _EXT_ROOT
-                ),
-            )
-            return
-
-        try:
-            adapter = session.get_adapter()
-            if requested_on:
-                result = adapter.activate()
+            controller, viewer = _render_target(node, kwargs)
+            if action == "enable":
+                result = (controller.activate(viewer) if requested
+                          else controller.deactivate(viewer))
+            elif action == "pause":
+                result = controller.toggle_pause(viewer)
+            elif action == "restore":
+                result = controller.deactivate(viewer)
             else:
-                result = adapter.deactivate()
-            ok = bool(result.ok)
-            reason = _result_reason(result)
-            detail = _result_detail(result)
+                result = controller.status(viewer)
+            if result.state == "error" and action == "enable" and enable is not None:
+                _restore_enable(enable, not requested)
+            _show_render_status(node, result)
         except Exception as exc:
-            _refuse(node, parm, requested_on, STATUS_ERROR, repr(exc))
-            return
-
-        if not ok:
-            _refuse(node, parm, requested_on, STATUS_REFUSED, reason)
-            return
-
-        token = _status_from_result(result)
-        _restore_enable(parm, token == STATUS_ON)
-        _set_status(node, "{} | {}".format(token, detail))
+            # No native observation was available. Revert the user request
+            # and explicitly mark state unknown rather than claiming OFF.
+            if action == "enable" and enable is not None:
+                _restore_enable(enable, not requested)
+            _set_status(node, "UNKNOWN | {}".format(exc))
     finally:
         _TOGGLE_IN_PROGRESS = False
+
+
+def toggle_callback(kwargs):
+    """Checked requests activate; unchecked requests restore, never inversion."""
+    _render_callback(kwargs, "enable")
+
+
+def pause_callback(kwargs):
+    _render_callback(kwargs, "pause")
+
+
+def refresh_render_callback(kwargs):
+    _render_callback(kwargs, "status")
+
+
+def restore_render_callback(kwargs):
+    _render_callback(kwargs, "restore")
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +384,7 @@ def turn_callback(kwargs):
         _set_parm_text(
             node,
             TURN_STATUS_PARM,
-            "ERROR | sidecar is not running; turn the runtime ON first",
+            "ERROR | optional assistant is not connected; renderer controls remain available",
         )
         return
 

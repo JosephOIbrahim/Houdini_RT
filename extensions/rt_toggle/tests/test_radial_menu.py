@@ -27,18 +27,18 @@ def _load():
     return module
 
 
-def test_menu_has_three_items_at_distinct_locations():
+def test_menu_has_four_items_at_distinct_locations():
     menu = _load()
 
     assert menu.MENU_NAME == "RT"
-    assert len(menu.ITEMS) == 3
+    assert len(menu.ITEMS) == 4
 
     locations = [item["location"] for item in menu.ITEMS]
-    assert len(set(locations)) == 3, locations
-    assert set(locations) == {"Top", "Right", "Left"}
+    assert len(set(locations)) == 4, locations
+    assert set(locations) == {"Top", "Right", "Bottom", "Left"}
 
     labels = {item["label"] for item in menu.ITEMS}
-    assert labels == {"RT Toggle", "RT Turn", "RT Turn Cancel"}
+    assert labels == {"HoudiniRT", "Pause / Resume RT", "RT Turn", "RT Turn Cancel"}
 
 
 def test_each_item_has_a_shipped_icon():
@@ -50,16 +50,17 @@ def test_each_item_has_a_shipped_icon():
         assert menu.icon_path(item["icon"]).endswith(item["icon"])
 
 
-def test_only_toggle_carries_a_check():
+def test_renderer_controls_carry_observed_state_checks():
     menu = _load()
 
     checked = [item["label"] for item in menu.ITEMS if item["check"]]
-    assert checked == ["RT Toggle"]
+    assert checked == ["HoudiniRT", "Pause / Resume RT"]
 
     # The check must be an expression, not a statement: compile it in eval mode.
     compile(menu.CHECK_EXPRESSION, "<check>", "eval")
-    assert "rt_runtime" in menu.CHECK_EXPRESSION
-    assert "'ON'" in menu.CHECK_EXPRESSION
+    assert "render_is_on" in menu.CHECK_EXPRESSION
+    assert "render_is_paused" in menu.check_expression(paused=True)
+    assert "get_adapter" not in menu.CHECK_EXPRESSION
 
 
 def test_action_scripts_compile_and_call_the_shelf_helpers():
@@ -69,7 +70,9 @@ def test_action_scripts_compile_and_call_the_shelf_helpers():
         source = menu.action_script(item["action"])
         compile(source, "<radial action>", "exec")
         assert "import rt_shelf" in source
-        assert f"rt_shelf.{item['action']}()" in source
+        assert f"rt_shelf.{item['action']}(" in source
+        if item["action"] in ("toggle_from_shelf", "pause_from_shelf"):
+            assert "viewer=globals().get('kwargs', {}).get('pane')" in source
         assert "sys.path.insert" in source
 
 

@@ -16,6 +16,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <list>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -53,14 +56,8 @@ public:
     /// Reports what the application asked for. Storage is one value per pixel either way.
     bool IsMultiSampled() const override { return _multiSampled; }
 
-    void* Map() override {
-        _mappers++;
-        return _buffer.data();
-    }
-
-    void Unmap() override {
-        _mappers--;
-    }
+    void* Map() override;
+    void Unmap() override;
 
     bool IsMapped() const override {
         return _mappers.load() != 0;
@@ -81,6 +78,17 @@ public:
     // ---------------------------------------------------------------------- //
     /// \name I/O helpers
     // ---------------------------------------------------------------------- //
+
+    /// Allocate matching detached storage, outside the renderer's publication lock.
+    /// Fill it with Map/Write/Clear, then Unmap it before PublishFrom.
+    std::unique_ptr<HdRTRenderBuffer> CreateStagingBuffer() const;
+
+    /// Consume detached storage with an O(1), allocation-free swap. The caller
+    /// checks its render generation under its publication lock first. Keep the
+    /// staging owner alive until AFTER releasing that lock: it may hold the old
+    /// front storage for deferred destruction. A consumed staging buffer is invalid.
+    /// Existing Map pointers remain stable until all readers have called Unmap.
+    bool PublishFrom(HdRTRenderBuffer& staging);
 
     /// Write a float, vec2f, vec3f or vec4f to one pixel, converting to the buffer's format. Extra
     /// components are dropped; missing ones are written as 0. Row 0 is the bottom of the image.
@@ -106,6 +114,12 @@ private:
     bool _multiSampled;
 
     std::vector<uint8_t> _buffer;
+    mutable std::mutex _storageMutex;
+    // List nodes are preallocated by CreateStagingBuffer, outside publication.
+    // Splicing retains old pixels without allocating/copying/freeing their storage.
+    std::list<std::vector<uint8_t>> _retired;
+    std::list<std::vector<uint8_t>> _retirementSlot;
+    bool _stagingConsumed = false;
 
     std::atomic<int> _mappers;
     std::atomic<bool> _converged;

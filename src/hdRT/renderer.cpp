@@ -67,17 +67,52 @@ HdRTRenderer::HdRTRenderer()
     , _gpuInitFailed(false)
     , _completedSamples(0)
 {
+    HDRT_DEBUG("render session=%p created", static_cast<void*>(this));
 }
 
 HdRTRenderer::~HdRTRenderer()
 {
     Shutdown();
+    HDRT_DEBUG("render session=%p destroyed", static_cast<void*>(this));
 }
 
 void
 HdRTRenderer::SetShaderPath(const std::string& spvPath)
 {
     _spvPath = spvPath;
+}
+
+void
+HdRTRenderer::Submit(HdRTRenderRequest request)
+{
+    {
+        std::lock_guard<std::mutex> lock(_requestMutex);
+        request.generation = _requestedGeneration.load() + 1;
+        _requested = std::make_shared<const HdRTRenderRequest>(std::move(request));
+        _requestedGeneration.store(_requested->generation);
+        for (const auto& binding : _requested->aovs) {
+            if (binding.renderBuffer) {
+                static_cast<HdRTRenderBuffer*>(binding.renderBuffer)->SetConverged(false);
+            }
+        }
+        HDRT_DEBUG("request renderer=%p generation=%llu scene=%llu", static_cast<void*>(this),
+                   (unsigned long long)_requested->generation,
+                   (unsigned long long)(_requested->scene ? _requested->scene->contentVersion : 0));
+    }
+    _requestReady.notify_one();
+}
+
+bool
+HdRTRenderer::IsConverged() const
+{
+    const uint64_t requested = _requestedGeneration.load();
+    return requested != 0 && _completedGeneration.load() == requested;
+}
+
+bool
+HdRTRenderer::_Superseded() const
+{
+    return !_activeRequest || _activeRequest->generation != _requestedGeneration.load();
 }
 
 void
@@ -165,39 +200,33 @@ HdRTRenderer::_ValidateAovBindings()
     return _aovBindingsValid;
 }
 
-void
-HdRTRenderer::Clear()
+std::unique_ptr<HdRTRenderBuffer>
+HdRTRenderer::_CreateClearedAov(size_t i)
 {
-    if (!_ValidateAovBindings()) {
-        return;
-    }
-
-    for (size_t i = 0; i < _aovBindings.size(); ++i) {
-        HdRTRenderBuffer *rb =
-            static_cast<HdRTRenderBuffer*>(_aovBindings[i].renderBuffer);
-
-        if (!_aovBindings[i].clearValue.IsEmpty()) {
-            rb->Map();
-            if (HdGetComponentFormat(rb->GetFormat()) == HdFormatInt32) {
-                int clearValue[4] = { 0, 0, 0, 0 };
-                if (_aovBindings[i].clearValue.IsHolding<int>()) {
-                    clearValue[0] = _aovBindings[i].clearValue.UncheckedGet<int>();
-                }
-                rb->Clear(1, clearValue);
-            } else {
-                float clearValue[4];
-                size_t n = _ClearAsFloats(_aovBindings[i].clearValue, clearValue);
-                if (n == 3 && _aovNames[i].name == HdAovTokens->color) {
-                    n = 4;   // a colour given without alpha is opaque
-                }
-                if (n > 0) {
-                    rb->Clear(n, clearValue);
-                }
+    auto staging = static_cast<HdRTRenderBuffer*>(
+        _aovBindings[i].renderBuffer)->CreateStagingBuffer();
+    if (!staging)
+        return nullptr;
+    HdRTRenderBuffer* rb = staging.get();
+    if (!_aovBindings[i].clearValue.IsEmpty()) {
+        if (HdGetComponentFormat(rb->GetFormat()) == HdFormatInt32) {
+            int clearValue[4] = { 0, 0, 0, 0 };
+            if (_aovBindings[i].clearValue.IsHolding<int>()) {
+                clearValue[0] = _aovBindings[i].clearValue.UncheckedGet<int>();
             }
-            rb->Unmap();
+            rb->Clear(1, clearValue);
+        } else {
+            float clearValue[4];
+            size_t n = _ClearAsFloats(_aovBindings[i].clearValue, clearValue);
+            if (n == 3 && _aovNames[i].name == HdAovTokens->color) {
+                n = 4;   // a colour given without alpha is opaque
+            }
+            if (n > 0) {
+                rb->Clear(n, clearValue);
+            }
         }
-        rb->SetConverged(false);
     }
+    return staging;
 }
 
 void
@@ -213,11 +242,16 @@ HdRTRenderer::MarkAovBuffersUnconverged()
 void
 HdRTRenderer::_MarkAovBuffersConverged()
 {
+    std::lock_guard<std::mutex> lock(_requestMutex);
+    if (_Superseded()) {
+        return;
+    }
     for (size_t i = 0; i < _aovBindings.size(); ++i) {
         if (_aovBindings[i].renderBuffer) {
             static_cast<HdRTRenderBuffer*>(_aovBindings[i].renderBuffer)->SetConverged(true);
         }
     }
+    _completedGeneration.store(_activeRequest->generation);
 }
 
 void
@@ -234,22 +268,28 @@ HdRTRenderer::_Fail(const std::string& what)
 
 // Writes the running average into the bound colour buffer(s). The GPU image covers the data window, row 0
 // at the bottom; (x0, y0) is where that window starts inside the render buffer, whose row 0 is also the
-// bottom. Other AOVs keep their clear value: depth, ids and normals arrive with real geometry in step 4.
-void
-HdRTRenderer::_WriteAovs(int completedSamples, unsigned int x0, unsigned int y0, unsigned int w, unsigned int h)
+// bottom. Other AOVs retain their clear values until their shading outputs are implemented.
+bool
+HdRTRenderer::_WriteAovs(int completedSamples, unsigned int x0, unsigned int y0,
+                        unsigned int w, unsigned int h, std::string* error)
 {
     const float* sums = _gpu.Accumulation();
-    if (!sums || completedSamples <= 0) {
-        return;
+    if (!sums || completedSamples <= 0 || _Superseded()) {
+        return true;
     }
     const float inv = 1.0f / float(completedSamples);
-
+    std::vector<std::unique_ptr<HdRTRenderBuffer>> staged;
+    staged.reserve(_aovBindings.size());
     for (size_t i = 0; i < _aovBindings.size(); ++i) {
+        staged.push_back(_CreateClearedAov(i));
+        if (!staged.back()) {
+            *error = "could not stage the current render buffer";
+            return false;
+        }
         if (_aovNames[i].name != HdAovTokens->color) {
             continue;
         }
-        HdRTRenderBuffer *rb =
-            static_cast<HdRTRenderBuffer*>(_aovBindings[i].renderBuffer);
+        HdRTRenderBuffer *rb = staged.back().get();
         if (HdGetComponentFormat(rb->GetFormat()) == HdFormatInt32) {
             continue;
         }
@@ -277,10 +317,62 @@ HdRTRenderer::_WriteAovs(int completedSamples, unsigned int x0, unsigned int y0,
         }
         rb->Unmap();
     }
+    std::unique_lock<std::mutex> requestLock(_requestMutex);
+    if (!_Superseded()) {
+        // Convert outside the handoff lock; only constant-time storage swaps publish pixels.
+        // Staging owners outlive this lock, so their retired image storage is freed afterwards.
+        for (size_t i = 0; i < staged.size(); ++i) {
+            if (!static_cast<HdRTRenderBuffer*>(_aovBindings[i].renderBuffer)->PublishFrom(*staged[i])) {
+                *error = "render-buffer storage changed before publication";
+                return false;
+            }
+        }
+        std::lock_guard<std::mutex> statsLock(_statsMutex);
+        const bool first = _stats.presentedGeneration != _activeRequest->generation;
+        _stats.presentedGeneration = _activeRequest->generation;
+        _unpresentedEdits = HdRTVkEditStats();
+        if (first || completedSamples == _config.spp) {
+            HDRT_DEBUG("present renderer=%p generation=%llu scene=%llu samples=%d",
+                       static_cast<void*>(this), (unsigned long long)_activeRequest->generation,
+                       (unsigned long long)(_scene ? _scene->contentVersion : 0), completedSamples);
+        }
+    }
+    return true;
 }
 
 void
 HdRTRenderer::Render(HdRenderThread *renderThread)
+{
+    // Keep the callback available for new requests while converged. StartRender is a no-op while
+    // rendering; returning between requests could otherwise lose a concurrent app-thread wakeup.
+    uint64_t processed = 0;
+    while (!renderThread->IsStopRequested()) {
+        std::shared_ptr<const HdRTRenderRequest> request;
+        {
+            std::unique_lock<std::mutex> lock(_requestMutex);
+            _requestReady.wait_for(lock, std::chrono::milliseconds(2), [&] {
+                return _requested && _requested->generation != processed;
+            });
+            if (_requested && _requested->generation != processed) {
+                request = _requested;
+            }
+        }
+        if (!request || renderThread->IsStopRequested()) {
+            continue;
+        }
+        _activeRequest = std::move(request);
+        processed = _activeRequest->generation;
+        SetConfig(_activeRequest->config);
+        SetScene(_activeRequest->scene);
+        SetCamera(_activeRequest->view, _activeRequest->projection);
+        SetDataWindow(_activeRequest->dataWindow);
+        SetAovBindings(_activeRequest->aovs);
+        _RenderFrame(renderThread);
+    }
+}
+
+void
+HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
 {
     const auto t0 = std::chrono::steady_clock::now();
     _completedSamples.store(0);
@@ -293,6 +385,15 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
         _stats.settingsSource = _config.source;
         _stats.error.clear();
         _stats.renderSeconds = 0.0;
+        _stats.edits = _unpresentedEdits;
+        _stats.editMilliseconds = 0.0;
+    }
+
+    while (renderThread->IsPauseRequested() && !renderThread->IsStopRequested() && !_Superseded()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (renderThread->IsStopRequested() || _Superseded()) {
+        return;
     }
 
     if (!_ValidateAovBindings()) {
@@ -350,22 +451,57 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
     // (Acceleration structures are never built in Sync or Execute: CLAUDE.md:30.)
     // A paused render submits no GPU work: the scene upload waits for Resume (Houdini pauses on edits, and a
     // pause outlives StopRender/StartRender). Hold here exactly as the pass loop does, then honour a stop.
-    while (renderThread->IsPauseRequested() && !renderThread->IsStopRequested()) {
+    while (renderThread->IsPauseRequested() && !renderThread->IsStopRequested() && !_Superseded()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (renderThread->IsStopRequested()) {
+    if (renderThread->IsStopRequested() || _Superseded()) {
         // Stopped before anything was traced: the buffers keep what they hold, and this render is over.
-        _MarkAovBuffersConverged();
         return;
     }
     if (_scene != _uploadedScene) {
         const auto s0 = std::chrono::steady_clock::now();
         static const HdRTWorldScene empty;
         const HdRTWorldScene& w = _scene ? *_scene : empty;
-        if (!_gpu.SetScene(w.positions.data(), w.normals.data(), w.VertexCount(), w.indices.data(),
-                           w.albedo.data(), w.TriangleCount(), &error)) {
+        std::vector<HdRTVkMesh> meshes;
+        meshes.reserve(w.meshes.size());
+        for (const auto& entry : w.meshes) {
+            const HdRTMeshData& data = *entry.second;
+            HdRTVkMesh mesh;
+            mesh.id = entry.first.GetString();
+            mesh.geometryVersion = data.geometryVersion;
+            mesh.topologyVersion = data.topologyVersion;
+            mesh.vertexCount = data.points.size();
+            mesh.triangleCount = data.triangles.size();
+            static_assert(sizeof(GfVec3f) == 3 * sizeof(float), "packed GPU xyz input");
+            static_assert(sizeof(GfVec3i) == 3 * sizeof(uint32_t), "packed GPU triangle input");
+            mesh.positions = reinterpret_cast<const float*>(data.points.cdata());
+            mesh.normals = reinterpret_cast<const float*>(data.normals.cdata());
+            mesh.indices = reinterpret_cast<const uint32_t*>(data.triangles.cdata());
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 4; ++c) {
+                    mesh.transform[r * 4 + c] = float(data.transform[c][r]);
+                }
+                mesh.albedo[r] = data.albedo[r];
+            }
+            mesh.visible = data.visible;
+            meshes.push_back(std::move(mesh));
+        }
+        HdRTVkEditStats edits;
+        if (!_gpu.SetMeshes(meshes, &edits, &error)) {
+            _uploadedScene.reset(); // SetMeshes failure invalidates the GPU's scene caches.
             _Fail(error);
             return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(_statsMutex);
+            _unpresentedEdits.blasBuilds += edits.blasBuilds;
+            _unpresentedEdits.blasRefits += edits.blasRefits;
+            _unpresentedEdits.tlasBuilds += edits.tlasBuilds;
+            _unpresentedEdits.tlasUpdates += edits.tlasUpdates;
+            _unpresentedEdits.geometryUploadBytes += edits.geometryUploadBytes;
+            _unpresentedEdits.tableUploadBytes += edits.tableUploadBytes;
+            _stats.edits = _unpresentedEdits;
+            _stats.sceneMemory = "geometry=device_local;index=device_local;normal=device_local;table=device_local;staging=host_visible;readback=host_visible";
         }
         _uploadedScene = _scene;
         HDRT_DEBUG("scene uploaded: %zu vertices, %zu triangles in %.3f s", w.VertexCount(), w.TriangleCount(),
@@ -397,6 +533,9 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
     bool failed = false;
     int completed = 0;
     int written = 0;
+    if (_Superseded() || renderThread->IsStopRequested()) {
+        return;
+    }
     if (!_gpu.BeginFrame(frame, &error)) {
         failed = true;
     }
@@ -409,17 +548,20 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
         // Pause point: hold here, without burning the GPU, until resumed or stopped. A paused image
         // shows everything accumulated so far, so bring the buffers up to date before waiting.
         while (renderThread->IsPauseRequested()) {
-            if (renderThread->IsStopRequested()) {
+            if (renderThread->IsStopRequested() || _Superseded()) {
                 break;
             }
             if (written < completed) {
-                _WriteAovs(completed, unsigned(dwX0), unsigned(dwY0), unsigned(dwW), unsigned(dwH));
+                if (!_WriteAovs(completed, unsigned(dwX0), unsigned(dwY0), unsigned(dwW), unsigned(dwH), &error)) {
+                    failed = true;
+                    break;
+                }
                 written = completed;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         // Cancellation point.
-        if (renderThread->IsStopRequested()) {
+        if (failed || renderThread->IsStopRequested() || _Superseded()) {
             break;
         }
 
@@ -427,19 +569,28 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
             failed = true;
             break;
         }
+        if (i == 0 && _gpu.HasScene()) {
+            const double observed = std::chrono::duration<double>(
+                _activeRequest->observedAt.time_since_epoch()).count();
+            std::lock_guard<std::mutex> lock(_statsMutex);
+            _stats.editMilliseconds = std::max(0.0, (_gpu.LastPassSubmitSeconds() - observed) * 1000.0);
+        }
         completed = i + 1;
         _completedSamples.store(completed);
 
         const auto now = std::chrono::steady_clock::now();
         if (completed == _config.spp || now - lastWrite >= std::chrono::milliseconds(33)) {
-            _WriteAovs(completed, unsigned(dwX0), unsigned(dwY0), unsigned(dwW), unsigned(dwH));
+            if (!_WriteAovs(completed, unsigned(dwX0), unsigned(dwY0), unsigned(dwW), unsigned(dwH), &error)) {
+                failed = true;
+                break;
+            }
             written = completed;
             lastWrite = now;
         }
     }
     // Stopped part-way: leave the buffers holding everything that was accumulated.
-    if (!failed && written < completed) {
-        _WriteAovs(completed, unsigned(dwX0), unsigned(dwY0), unsigned(dwW), unsigned(dwH));
+    if (!failed && !_Superseded() && !renderThread->IsStopRequested() && written < completed) {
+        failed = !_WriteAovs(completed, unsigned(dwX0), unsigned(dwY0), unsigned(dwW), unsigned(dwH), &error);
     }
 
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -452,8 +603,7 @@ HdRTRenderer::Render(HdRenderThread *renderThread)
 
     if (failed) {
         _Fail(error);
-    } else {
-        // Converged, or stopped: either way this render writes nothing more.
+    } else if (!_Superseded() && !renderThread->IsStopRequested() && completed == _config.spp) {
         _MarkAovBuffersConverged();
     }
     HDRT_DEBUG("render finished: %d of %d samples per pixel in %.3f s (%.3f s of that before the first pass)",
@@ -473,6 +623,7 @@ HdRTRenderer::GetStats() const
     std::lock_guard<std::mutex> lock(_statsMutex);
     HdRTRenderStats s = _stats;
     s.completedSamples = _completedSamples.load();
+    s.sceneGeneration = _requestedGeneration.load();
     return s;
 }
 

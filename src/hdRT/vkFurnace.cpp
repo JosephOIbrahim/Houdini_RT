@@ -12,9 +12,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <fstream>
+#include <map>
+#include <set>
 #include <vector>
 
 namespace {
@@ -91,6 +96,40 @@ struct Accel
     VkDeviceAddress address = 0;
 };
 
+// Four uint64 addresses/padding, then one vec4: exactly the shader's std430 table row.
+struct MeshRow
+{
+    uint64_t positions = 0, normals = 0, indices = 0, padding = 0;
+    float albedo[4] = {};
+};
+static_assert(sizeof(MeshRow) == 48, "MeshRow must match the shader");
+
+struct MeshGpu
+{
+    Buffer positions, normals, indices;
+    Accel blas;
+    uint64_t geometryVersion = 0, topologyVersion = 0;
+    size_t vertexCount = 0, triangleCount = 0;
+    uint32_t slot = 0;
+    float transform[12] = {};
+    bool visible = false;
+    bool initialized = false;
+};
+
+bool _RenderableTransform(const float (&m)[12])
+{
+    for (float v : m)
+        if (!std::isfinite(v))
+            return false;
+    // Vulkan requires an invertible linear transform, even for a masked-out instance
+    // (VUID-VkTransformMatrixKHR-matrix-03799). Use double so tiny valid scales do not
+    // underflow the determinant. A zero-scale mesh keeps its BLAS for later recovery.
+    const double determinant = double(m[0]) * (double(m[5]) * m[10] - double(m[6]) * m[9])
+        - double(m[1]) * (double(m[4]) * m[10] - double(m[6]) * m[8])
+        + double(m[2]) * (double(m[4]) * m[9] - double(m[5]) * m[8]);
+    return determinant != 0.0;
+}
+
 // Mirrors `buffer Frame` in shaders/furnace.comp (std430: two mat4, then 16-byte vectors).
 struct FrameGpu
 {
@@ -126,11 +165,15 @@ struct HdRTVkFurnace::Impl
     AsApi as;
     VkDeviceSize scratchAlignment = 1;
     uint64_t maxPrimitiveCount = 0;        // VkPhysicalDeviceAccelerationStructurePropertiesKHR
+    uint64_t maxInstanceCount = 0;
     uint32_t maxStorageBufferRange = 0;    // VkPhysicalDeviceLimits
 
-    // The scene: one world-space mesh (SetScene). Positions double as the BLAS build input.
-    Buffer sceneVb, sceneNb, sceneIb, sceneAlbedo, instanceBuffer;
-    Accel blas, tlas;
+    std::map<std::string, std::unique_ptr<MeshGpu>> meshes;
+    std::vector<MeshGpu*> slots;
+    std::vector<MeshRow> rows;
+    Buffer meshTable, instanceBuffer, stagingBuffer, scratchBuffer;
+    Accel tlas;
+    uint64_t legacyVersion = 0;
     bool hasScene = false;
 
     VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
@@ -148,6 +191,7 @@ struct HdRTVkFurnace::Impl
     std::string deviceName;
     bool validationActive = false;
     bool ready = false;
+    double lastPassSubmitSeconds = 0.0;
     std::atomic<int> validationErrors{ 0 };
     std::atomic<int> validationWarnings{ 0 };
 
@@ -160,16 +204,22 @@ struct HdRTVkFurnace::Impl
     bool CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible, Buffer* out, std::string* error, bool cpuReads = false,
                       bool gpuReads = false);
     void DestroyBuffer(Buffer& b);
+    bool EnsureBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible,
+                      Buffer* out, std::string* error);
+    bool Upload(Buffer& out, const void* data, VkDeviceSize bytes, VkDeviceSize offset, std::string* error);
     VkDeviceAddress BufferAddress(VkBuffer buffer) const;
-    bool Submit(std::string* error);
+    bool Submit(std::string* error, bool renderPass = false);
     bool BuildAccel(VkAccelerationStructureTypeKHR type, const VkAccelerationStructureGeometryKHR& geometry, uint32_t primitiveCount,
                     Accel* out, std::string* error);
     void DestroyAccel(Accel& a);
 
     bool CreateInstance(bool wantValidation, std::string* error);
     bool CreateDevice(bool allowSoftwareDevice, std::string* error);
-    bool BuildScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
-                    const float* albedo, size_t triangleCount, std::string* error);
+    bool SetMeshes(const std::vector<HdRTVkMesh>& input, HdRTVkEditStats& stats, std::string* error);
+    bool UpdateMesh(MeshGpu& mesh, const HdRTVkMesh& view, HdRTVkEditStats& stats,
+                    bool* tlasDirty, std::string* error);
+    bool BuildTlas(HdRTVkEditStats& stats, std::string* error);
+    void DestroyMesh(MeshGpu& mesh);
     void DestroyScene();
     bool CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error);
     void Destroy();
@@ -290,13 +340,62 @@ VkDeviceAddress HdRTVkFurnace::Impl::BufferAddress(VkBuffer buffer) const
     return vkGetBufferDeviceAddress(device, &info);
 }
 
+bool HdRTVkFurnace::Impl::EnsureBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible,
+                                       Buffer* out, std::string* error)
+{
+    if (out->buffer && out->size >= size)
+        return true;
+    Buffer next;
+    const VkDeviceSize capacity = std::max(size, out->size);
+    if (!CreateBuffer(capacity, usage, hostVisible, &next, error))
+    {
+        DestroyBuffer(next);
+        return false;
+    }
+    DestroyBuffer(*out);
+    *out = next;
+    return true;
+}
+
+bool HdRTVkFurnace::Impl::Upload(Buffer& out, const void* data, VkDeviceSize bytes,
+                                 VkDeviceSize offset, std::string* error)
+{
+    if (!bytes)
+        return true;
+    if (!data || offset > out.size || bytes > out.size - offset)
+        return _Fail(error, "invalid scene upload range");
+    if (!EnsureBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, &stagingBuffer, error))
+        return false;
+    std::memcpy(stagingBuffer.mapped, data, size_t(bytes));
+    HDRT_VK(vkResetCommandBuffer(cmd, 0));
+    VkCommandBufferBeginInfo begin = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    HDRT_VK(vkBeginCommandBuffer(cmd, &begin));
+    VkBufferCopy copy = {0, offset, bytes};
+    vkCmdCopyBuffer(cmd, stagingBuffer.buffer, out.buffer, 1, &copy);
+    VkBufferMemoryBarrier barrier = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = out.buffer;
+    barrier.offset = offset;
+    barrier.size = bytes;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                        0, 0, nullptr, 1, &barrier, 0, nullptr);
+    return Submit(error);
+}
+
 // Ends the one command buffer, submits it and waits for the queue to drain.
-bool HdRTVkFurnace::Impl::Submit(std::string* error)
+bool HdRTVkFurnace::Impl::Submit(std::string* error, bool renderPass)
 {
     HDRT_VK(vkEndCommandBuffer(cmd));
     VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
+    if (renderPass)
+        lastPassSubmitSeconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
     HDRT_VK(vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE));
     HDRT_VK(vkQueueWaitIdle(queue));
     return true;
@@ -316,26 +415,28 @@ bool HdRTVkFurnace::Impl::BuildAccel(VkAccelerationStructureTypeKHR type, const 
     VkAccelerationStructureBuildSizesInfoKHR sizes = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR };
     as.build_sizes(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build, &primitiveCount, &sizes);
 
-    if (!CreateBuffer(sizes.accelerationStructureSize,
-                      VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, false, &out->storage, error))
-        return false;
-    VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
-    ci.buffer = out->storage.buffer;
-    ci.size = sizes.accelerationStructureSize;
-    ci.type = type;
-    HDRT_VK(as.create(device, &ci, nullptr, &out->handle));
+    if (!out->handle || out->storage.size < sizes.accelerationStructureSize)
+    {
+        DestroyAccel(*out);
+        if (!CreateBuffer(sizes.accelerationStructureSize,
+                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                          false, &out->storage, error))
+            return false;
+        VkAccelerationStructureCreateInfoKHR ci = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR };
+        ci.buffer = out->storage.buffer;
+        ci.size = sizes.accelerationStructureSize;
+        ci.type = type;
+        HDRT_VK(as.create(device, &ci, nullptr, &out->handle));
+    }
 
     // Scratch memory must start at a multiple of the device's scratch alignment. Over-allocate
     // and round the address up so the requirement holds whatever the allocator returns.
     const VkDeviceSize align = scratchAlignment ? scratchAlignment : 1;
-    Buffer scratch;
-    if (!CreateBuffer(sizes.buildScratchSize + align, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, false, &scratch,
-                      error))
-    {
-        DestroyBuffer(scratch);
+    if (!EnsureBuffer(sizes.buildScratchSize + align,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                      false, &scratchBuffer, error))
         return false;
-    }
-    const VkDeviceAddress scratchBase = BufferAddress(scratch.buffer);
+    const VkDeviceAddress scratchBase = BufferAddress(scratchBuffer.buffer);
     const VkDeviceAddress scratchAligned = (scratchBase + align - 1) / align * align;
 
     build.dstAccelerationStructure = out->handle;
@@ -346,6 +447,7 @@ bool HdRTVkFurnace::Impl::BuildAccel(VkAccelerationStructureTypeKHR type, const 
     const VkAccelerationStructureBuildRangeInfoKHR* ranges = &range;
 
     bool ok = true;
+    HDRT_VK(vkResetCommandBuffer(cmd, 0));
     VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     const VkResult begun = vkBeginCommandBuffer(cmd, &bi);
@@ -353,10 +455,20 @@ bool HdRTVkFurnace::Impl::BuildAccel(VkAccelerationStructureTypeKHR type, const 
         ok = _FailVk(error, begun, "vkBeginCommandBuffer(cmd, &bi)");
     if (ok)
     {
+        VkMemoryBarrier before = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        before.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        before.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &before, 0, nullptr, 0, nullptr);
         as.cmd_build(cmd, 1, &build, &ranges);
+        VkMemoryBarrier after = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        after.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+        after.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                            VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            0, 1, &after, 0, nullptr, 0, nullptr);
         ok = Submit(error);
     }
-    DestroyBuffer(scratch);
     if (!ok)
         return false;
 
@@ -470,7 +582,7 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
             VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
             f2.pNext = &v12;
             vkGetPhysicalDeviceFeatures2(candidate, &f2);
-            rayQuery = rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress;
+            rayQuery = rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && f2.features.shaderInt64;
         }
         const int rank = (rayQuery ? 2 : 0) + (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 1 : 0);
         if (rank > bestRank)
@@ -493,6 +605,7 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     vkGetPhysicalDeviceProperties2(phys, &props2);
     scratchAlignment = asProps.minAccelerationStructureScratchOffsetAlignment;
     maxPrimitiveCount = asProps.maxPrimitiveCount;
+    maxInstanceCount = asProps.maxInstanceCount;
     maxStorageBufferRange = props2.properties.limits.maxStorageBufferRange;
 
     uint32_t familyCount = 0;
@@ -529,6 +642,9 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     dci.enabledExtensionCount = uint32_t(sizeof(requiredExtensions) / sizeof(requiredExtensions[0]));
     dci.ppEnabledExtensionNames = requiredExtensions;
     dci.pNext = &enable12;
+    VkPhysicalDeviceFeatures coreFeatures = {};
+    coreFeatures.shaderInt64 = VK_TRUE;
+    dci.pEnabledFeatures = &coreFeatures;
     HDRT_VK(vkCreateDevice(phys, &dci, nullptr, &device));
     vkGetDeviceQueue(device, family, 0, &queue);
 
@@ -555,128 +671,257 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     return true;
 }
 
-// ---- scene: one world-space mesh, one bottom-level structure, one identity instance -----------------
+// ---- persistent per-mesh scene ---------------------------------------------------------------
+
+void HdRTVkFurnace::Impl::DestroyMesh(MeshGpu& mesh)
+{
+    DestroyAccel(mesh.blas);
+    DestroyBuffer(mesh.positions);
+    DestroyBuffer(mesh.normals);
+    DestroyBuffer(mesh.indices);
+}
 
 void HdRTVkFurnace::Impl::DestroyScene()
 {
     hasScene = false;
     if (device && queue)
-        vkQueueWaitIdle(queue);   // nothing may still be reading the old buffers
+        vkQueueWaitIdle(queue);
     DestroyAccel(tlas);
+    for (auto& entry : meshes)
+        DestroyMesh(*entry.second);
+    meshes.clear();
+    slots.clear();
+    rows.clear();
+    DestroyBuffer(meshTable);
     DestroyBuffer(instanceBuffer);
-    DestroyAccel(blas);
-    DestroyBuffer(sceneVb);
-    DestroyBuffer(sceneNb);
-    DestroyBuffer(sceneIb);
-    DestroyBuffer(sceneAlbedo);
+    DestroyBuffer(stagingBuffer);
+    DestroyBuffer(scratchBuffer);
 }
 
-bool HdRTVkFurnace::Impl::BuildScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
-                                     const float* albedo, size_t triangleCount, std::string* error)
+bool HdRTVkFurnace::Impl::UpdateMesh(MeshGpu& mesh, const HdRTVkMesh& view,
+                                     HdRTVkEditStats& stats, bool* tlasDirty, std::string* error)
 {
-    DestroyScene();
-    if (triangleCount == 0 || vertexCount == 0)
-        return true;   // no geometry: no scene, every pass renders black with alpha 0
-    // The shader indexes 3 floats per vertex and 3 indices per triangle in 32-bit arithmetic.
-    if (vertexCount > size_t(UINT32_MAX) / 3 || triangleCount > size_t(UINT32_MAX) / 3)
-        return _Fail(error, "the scene is too large for 32-bit indexing in the kernel");
-    if (maxPrimitiveCount && uint64_t(triangleCount) > maxPrimitiveCount)
-        return _Fail(error, "the scene has more triangles than this device allows in one acceleration structure");
-
-    // Positions are a build input and a storage buffer (the shader interpolates the hit point from them);
-    // the rest are storage buffers only. Written once per edit from the host; placed in device-local memory
-    // the host can write when that heap is large (resizable BAR), else in host memory (see CreateBuffer).
-    const VkBufferUsageFlags inputUsage =
-        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    const VkBufferUsageFlags geomUsage = inputUsage | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    const VkDeviceSize vbBytes = VkDeviceSize(vertexCount) * 3 * sizeof(float);
-    const VkDeviceSize ibBytes = VkDeviceSize(triangleCount) * 3 * sizeof(uint32_t);
-    const VkDeviceSize abBytes = VkDeviceSize(triangleCount) * 4 * sizeof(float);
-    if (maxStorageBufferRange && std::max(std::max(vbBytes, ibBytes), abBytes) > VkDeviceSize(maxStorageBufferRange))
-        return _Fail(error, "a scene buffer is larger than this device's maxStorageBufferRange");
-    if (!CreateBuffer(vbBytes, geomUsage, true, &sceneVb, error, false, true))
-        return false;
-    if (!CreateBuffer(vbBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneNb, error, false, true))
-        return false;
-    if (!CreateBuffer(ibBytes, geomUsage, true, &sceneIb, error, false, true))
-        return false;
-    if (!CreateBuffer(abBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &sceneAlbedo, error, false, true))
-        return false;
-    std::memcpy(sceneVb.mapped, positions, size_t(vbBytes));
-    std::memcpy(sceneNb.mapped, normals, size_t(vbBytes));
-    std::memcpy(sceneIb.mapped, indices, size_t(ibBytes));
-    std::memcpy(sceneAlbedo.mapped, albedo, size_t(abBytes));
-
-    VkAccelerationStructureGeometryKHR geometry = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
-    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-    geometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    geometry.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-    geometry.geometry.triangles.vertexData.deviceAddress = BufferAddress(sceneVb.buffer);
-    geometry.geometry.triangles.vertexStride = 3 * sizeof(float);
-    geometry.geometry.triangles.maxVertex = uint32_t(vertexCount - 1);
-    geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
-    geometry.geometry.triangles.indexData.deviceAddress = BufferAddress(sceneIb.buffer);
-    if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geometry, uint32_t(triangleCount), &blas, error))
-        return false;
-
-    // One instance, identity transform: the render pass already applied every mesh transform.
-    // Back faces are hit like front faces (Karma shades and shadows them the same).
-    VkAccelerationStructureInstanceKHR instanceData = {};
-    instanceData.transform.matrix[0][0] = 1.0f;
-    instanceData.transform.matrix[1][1] = 1.0f;
-    instanceData.transform.matrix[2][2] = 1.0f;
-    instanceData.instanceCustomIndex = 0;
-    instanceData.mask = 0xFF;
-    instanceData.instanceShaderBindingTableRecordOffset = 0;
-    instanceData.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-    instanceData.accelerationStructureReference = blas.address;
-    if (!CreateBuffer(sizeof(instanceData), inputUsage, true, &instanceBuffer, error))
-        return false;
-    std::memcpy(instanceBuffer.mapped, &instanceData, sizeof(instanceData));
-
-    VkAccelerationStructureGeometryKHR tlasGeometry = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
-    tlasGeometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
-    tlasGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
-    tlasGeometry.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
-    tlasGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
-    tlasGeometry.geometry.instances.data.deviceAddress = BufferAddress(instanceBuffer.buffer);
-    if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, tlasGeometry, 1, &tlas, error))
-        return false;
-
-    // Point bindings 0 and 3..6 at the new scene. The queue is idle (BuildAccel waits), so no pass uses them.
-    VkWriteDescriptorSetAccelerationStructureKHR asWrite = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
-    asWrite.accelerationStructureCount = 1;
-    asWrite.pAccelerationStructures = &tlas.handle;
-    const VkDescriptorBufferInfo infos[4] = { { sceneVb.buffer, 0, VK_WHOLE_SIZE }, { sceneNb.buffer, 0, VK_WHOLE_SIZE },
-                                              { sceneIb.buffer, 0, VK_WHOLE_SIZE }, { sceneAlbedo.buffer, 0, VK_WHOLE_SIZE } };
-    VkWriteDescriptorSet writes[5] = {};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = descriptorSet;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-    writes[0].pNext = &asWrite;
-    for (uint32_t k = 0; k < 4; ++k)
+    const bool topology = !mesh.initialized || mesh.topologyVersion != view.topologyVersion
+                          || mesh.triangleCount != view.triangleCount;
+    const bool geometry = topology || mesh.geometryVersion != view.geometryVersion
+                          || mesh.vertexCount != view.vertexCount;
+    if (!mesh.initialized || mesh.visible != view.visible
+        || std::memcmp(mesh.transform, view.transform, sizeof(mesh.transform)))
+        *tlasDirty = true;
+    if (geometry)
     {
-        writes[k + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[k + 1].dstSet = descriptorSet;
-        writes[k + 1].dstBinding = 3 + k;
-        writes[k + 1].descriptorCount = 1;
-        writes[k + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[k + 1].pBufferInfo = &infos[k];
+        *tlasDirty = true;
+        if (!view.vertexCount || !view.triangleCount)
+            DestroyMesh(mesh);
+        else
+        {
+            const VkBufferUsageFlags input = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            const VkBufferUsageFlags storage = input | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+            const VkDeviceSize vbBytes = VkDeviceSize(view.vertexCount) * 3 * sizeof(float);
+            const VkDeviceSize ibBytes = VkDeviceSize(view.triangleCount) * 3 * sizeof(uint32_t);
+            if (!EnsureBuffer(vbBytes, storage, false, &mesh.positions, error)
+                || !EnsureBuffer(vbBytes, storage, false, &mesh.normals, error))
+                return false;
+            if (!Upload(mesh.positions, view.positions, vbBytes, 0, error))
+                return false;
+            stats.geometryUploadBytes += vbBytes;
+            if (!Upload(mesh.normals, view.normals, vbBytes, 0, error))
+                return false;
+            stats.geometryUploadBytes += vbBytes;
+            if (topology || !mesh.indices.buffer)
+            {
+                if (!EnsureBuffer(ibBytes, storage, false, &mesh.indices, error)
+                    || !Upload(mesh.indices, view.indices, ibBytes, 0, error))
+                    return false;
+                stats.geometryUploadBytes += ibBytes;
+            }
+            VkAccelerationStructureGeometryKHR geom = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+            geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+            auto& triangles = geom.geometry.triangles;
+            triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            triangles.vertexData.deviceAddress = BufferAddress(mesh.positions.buffer);
+            triangles.vertexStride = 3 * sizeof(float);
+            triangles.maxVertex = uint32_t(view.vertexCount - 1);
+            triangles.indexType = VK_INDEX_TYPE_UINT32;
+            triangles.indexData.deviceAddress = BufferAddress(mesh.indices.buffer);
+            if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, geom,
+                            uint32_t(view.triangleCount), &mesh.blas, error))
+                return false;
+            ++stats.blasBuilds;
+        }
     }
-    vkUpdateDescriptorSets(device, 5, writes, 0, nullptr);
-    hasScene = true;
+    MeshRow& row = rows[mesh.slot];
+    row.positions = mesh.positions.buffer ? BufferAddress(mesh.positions.buffer) : 0;
+    row.normals = mesh.normals.buffer ? BufferAddress(mesh.normals.buffer) : 0;
+    row.indices = mesh.indices.buffer ? BufferAddress(mesh.indices.buffer) : 0;
+    std::memcpy(row.albedo, view.albedo, sizeof(row.albedo));
+    std::memcpy(mesh.transform, view.transform, sizeof(mesh.transform));
+    mesh.visible = view.visible;
+    mesh.geometryVersion = view.geometryVersion;
+    mesh.topologyVersion = view.topologyVersion;
+    mesh.vertexCount = view.vertexCount;
+    mesh.triangleCount = view.triangleCount;
+    mesh.initialized = true;
     return true;
 }
 
-// ---- pipeline: one compute shader, seven bindings (0 tlas, 1 frame, 2 accumulation, 3-6 the scene) ---------------------------------------------------
+bool HdRTVkFurnace::Impl::BuildTlas(HdRTVkEditStats& stats, std::string* error)
+{
+    std::vector<VkAccelerationStructureInstanceKHR> instances;
+    hasScene = false;
+    for (MeshGpu* mesh : slots)
+    {
+        if (!mesh || !mesh->blas.handle || !_RenderableTransform(mesh->transform))
+            continue;
+        VkAccelerationStructureInstanceKHR item = {};
+        std::memcpy(item.transform.matrix, mesh->transform, sizeof(mesh->transform));
+        item.instanceCustomIndex = mesh->slot;
+        item.mask = mesh->visible ? 0xFF : 0;
+        item.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        item.accelerationStructureReference = mesh->blas.address;
+        instances.push_back(item);
+        hasScene = hasScene || mesh->visible;
+    }
+    if (instances.empty())
+    {
+        DestroyAccel(tlas);
+        return true;
+    }
+    if (maxInstanceCount && instances.size() > maxInstanceCount)
+        return _Fail(error, "too many mesh instances for the selected Vulkan device");
+    const VkDeviceSize bytes = instances.size() * sizeof(instances[0]);
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (!EnsureBuffer(bytes, usage, false, &instanceBuffer, error)
+        || !Upload(instanceBuffer, instances.data(), bytes, 0, error))
+        return false;
+    VkAccelerationStructureGeometryKHR geom = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
+    geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geom.geometry.instances.data.deviceAddress = BufferAddress(instanceBuffer.buffer);
+    if (!BuildAccel(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR, geom,
+                    uint32_t(instances.size()), &tlas, error))
+        return false;
+    ++stats.tlasBuilds;
+    VkWriteDescriptorSetAccelerationStructureKHR asWrite = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR };
+    asWrite.accelerationStructureCount = 1;
+    asWrite.pAccelerationStructures = &tlas.handle;
+    VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = descriptorSet;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    write.pNext = &asWrite;
+    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    return true;
+}
+
+bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
+                                    HdRTVkEditStats& stats, std::string* error)
+{
+    std::set<std::string> current;
+    for (const HdRTVkMesh& view : input)
+    {
+        if (view.id.empty() || !current.insert(view.id).second)
+            return _Fail(error, "mesh ids must be nonempty and unique");
+        if (view.vertexCount > size_t(UINT32_MAX) / 3 || view.triangleCount > size_t(UINT32_MAX) / 3
+            || (maxPrimitiveCount && view.triangleCount > maxPrimitiveCount))
+            return _Fail(error, "mesh exceeds the Vulkan or shader indexing limits");
+        if (view.vertexCount && view.triangleCount && (!view.positions || !view.normals || !view.indices))
+            return _Fail(error, "nonempty mesh has a missing geometry array");
+    }
+    HDRT_VK(vkQueueWaitIdle(queue));
+    bool tlasDirty = false;
+    std::vector<uint32_t> changedRows;
+    for (auto it = meshes.begin(); it != meshes.end(); )
+    {
+        if (current.count(it->first))
+        {
+            ++it;
+            continue;
+        }
+        const uint32_t slot = it->second->slot;
+        DestroyMesh(*it->second);
+        slots[slot] = nullptr;
+        rows[slot] = MeshRow();
+        changedRows.push_back(slot);
+        it = meshes.erase(it);
+        tlasDirty = true;
+    }
+    for (const HdRTVkMesh& view : input)
+    {
+        auto found = meshes.find(view.id);
+        if (found == meshes.end())
+        {
+            auto mesh = std::make_unique<MeshGpu>();
+            auto free = std::find(slots.begin(), slots.end(), nullptr);
+            const size_t slot = size_t(free - slots.begin());
+            if (slot >= (1u << 24))
+                return _Fail(error, "mesh table exceeds Vulkan instanceCustomIndex range");
+            mesh->slot = uint32_t(slot);
+            if (free == slots.end())
+            {
+                slots.push_back(mesh.get());
+                rows.emplace_back();
+            }
+            else
+                *free = mesh.get();
+            found = meshes.emplace(view.id, std::move(mesh)).first;
+        }
+        MeshGpu& mesh = *found->second;
+        const MeshRow previous = rows[mesh.slot];
+        if (!UpdateMesh(mesh, view, stats, &tlasDirty, error))
+            return false;
+        if (std::memcmp(&previous, &rows[mesh.slot], sizeof(MeshRow)))
+            changedRows.push_back(mesh.slot);
+    }
+    if (!rows.empty())
+    {
+        const VkDeviceSize bytes = rows.size() * sizeof(MeshRow);
+        if (maxStorageBufferRange && bytes > maxStorageBufferRange)
+            return _Fail(error, "mesh table exceeds maxStorageBufferRange");
+        const bool resized = !meshTable.buffer || meshTable.size < bytes;
+        if (!EnsureBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                          false, &meshTable, error))
+            return false;
+        if (resized)
+        {
+            if (!Upload(meshTable, rows.data(), bytes, 0, error))
+                return false;
+            stats.tableUploadBytes += bytes;
+        }
+        else
+        {
+            std::sort(changedRows.begin(), changedRows.end());
+            changedRows.erase(std::unique(changedRows.begin(), changedRows.end()), changedRows.end());
+            for (uint32_t slot : changedRows)
+            {
+                if (!Upload(meshTable, &rows[slot], sizeof(MeshRow), slot * sizeof(MeshRow), error))
+                    return false;
+                stats.tableUploadBytes += sizeof(MeshRow);
+            }
+        }
+        VkDescriptorBufferInfo info = {meshTable.buffer, 0, bytes};
+        VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        write.dstSet = descriptorSet;
+        write.dstBinding = 3;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &info;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+    return !tlasDirty || BuildTlas(stats, error);
+}
+
+// ---- pipeline: four bindings (0 TLAS, 1 frame, 2 accumulation, 3 mesh table) ---------------------------------------------------
 
 bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error)
 {
-    VkDescriptorSetLayoutBinding bindings[7] = {};
-    for (uint32_t k = 0; k < 7; ++k)
+    VkDescriptorSetLayoutBinding bindings[4] = {};
+    for (uint32_t k = 0; k < 4; ++k)
     {
         bindings[k].binding = k;
         bindings[k].descriptorType = (k == 0) ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -684,7 +929,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
         bindings[k].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dslci = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    dslci.bindingCount = 7;
+    dslci.bindingCount = 4;
     dslci.pBindings = bindings;
     HDRT_VK(vkCreateDescriptorSetLayout(device, &dslci, nullptr, &setLayout));
 
@@ -706,7 +951,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     pci.layout = pipelineLayout;
     HDRT_VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline));
 
-    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6 } };
+    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 } };
     VkDescriptorPoolCreateInfo dpci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -723,8 +968,8 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
         return false;
     std::memset(frameBuffer.mapped, 0, sizeof(FrameGpu));
 
-    // Binding 1 now; binding 2 in BeginFrame; bindings 0 and 3..6 in BuildScene. No pass is dispatched
-    // before all seven are written (RenderPass skips the dispatch while there is no scene).
+    // Binding 1 now; binding 2 in BeginFrame; bindings 0 and 3 in SetMeshes. No pass is dispatched
+    // before all four are written (RenderPass skips the dispatch while there is no scene).
     VkDescriptorBufferInfo frameInfo = { frameBuffer.buffer, 0, VK_WHOLE_SIZE };
     VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
     write.dstSet = descriptorSet;
@@ -788,17 +1033,13 @@ void HdRTVkFurnace::Impl::Destroy()
     as = AsApi();
     frameBuffer = Buffer();
     accumBuffer = Buffer();
-    sceneVb = Buffer();
-    sceneNb = Buffer();
-    sceneIb = Buffer();
-    sceneAlbedo = Buffer();
     instanceBuffer = Buffer();
-    blas = Accel();
     tlas = Accel();
     hasScene = false;
     width = 0;
     height = 0;
     validationActive = false;
+    lastPassSubmitSeconds = 0.0;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -849,10 +1090,46 @@ bool HdRTVkFurnace::IsReady() const
 bool HdRTVkFurnace::SetScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
                              const float* albedo, size_t triangleCount, std::string* error)
 {
+    if (albedo)
+        for (size_t triangle = 1; triangle < triangleCount; ++triangle)
+            if (std::memcmp(albedo, albedo + 4 * triangle, 4 * sizeof(float)))
+                return _Fail(error, "SetScene supports uniform albedo; use SetMeshes for distinct mesh colors");
+    HdRTVkMesh mesh;
+    mesh.id = "__legacy_scene";
+    mesh.geometryVersion = mesh.topologyVersion = ++_impl->legacyVersion;
+    mesh.positions = positions;
+    mesh.normals = normals;
+    mesh.vertexCount = vertexCount;
+    mesh.indices = indices;
+    mesh.triangleCount = triangleCount;
+    if (albedo && triangleCount)
+        std::memcpy(mesh.albedo, albedo, sizeof(mesh.albedo));
+    return SetMeshes({mesh}, nullptr, error);
+}
+
+bool HdRTVkFurnace::SetMeshes(const std::vector<HdRTVkMesh>& meshes, HdRTVkEditStats* stats,
+                              std::string* error)
+{
+    HdRTVkEditStats measured;
+    if (stats)
+        *stats = measured;
     Impl& d = *_impl;
     if (!d.ready)
-        return _Fail(error, "SetScene called before a successful Init");
-    return d.BuildScene(positions, normals, vertexCount, indices, albedo, triangleCount, error);
+        return _Fail(error, "SetMeshes called before a successful Init");
+    bool ok = false;
+    try
+    {
+        ok = d.SetMeshes(meshes, measured, error);
+    }
+    catch (const std::exception& exc)
+    {
+        _Fail(error, std::string("scene update failed: ") + exc.what());
+    }
+    if (stats)
+        *stats = measured;
+    if (!ok)
+        d.DestroyScene();   // never leave a partially updated scene available for dispatch
+    return ok;
 }
 
 bool HdRTVkFurnace::HasScene() const
@@ -929,7 +1206,12 @@ bool HdRTVkFurnace::RenderPass(uint32_t passIndex, std::string* error)
     vkCmdBindPipeline(d.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d.pipeline);
     vkCmdBindDescriptorSets(d.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d.pipelineLayout, 0, 1, &d.descriptorSet, 0, nullptr);
     vkCmdDispatch(d.cmd, (d.width + 7) / 8, (d.height + 7) / 8, 1);   // local size is 8 x 8 in furnace.comp
-    return d.Submit(error);
+    return d.Submit(error, true);
+}
+
+double HdRTVkFurnace::LastPassSubmitSeconds() const
+{
+    return _impl->lastPassSubmitSeconds;
 }
 
 const float* HdRTVkFurnace::Accumulation() const

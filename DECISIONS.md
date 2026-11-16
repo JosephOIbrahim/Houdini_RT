@@ -102,3 +102,24 @@
 - Measured on nonce 101 with the sealed exam's own FLIP code (Karma CPU reference; harness `_work/s4exam/c6_ab.sh`, results `probe/c6_ab_iid.txt`). Noise floors: the delegate against itself, two seeds, FLIP 0.0159 and per-pixel relative RMS 0.0118; Karma CPU against itself 0.0179 and 0.0187. The delegate is less noisy than Karma, so a thin FLIP margin against Karma means bias, not noise.
 - Mirroring a cosine sample about the shading normal back above the geometric face (the C5 kernel) scored FLIP 0.0444/0.0452, level +0.12%, RMS 0.0251: about a 2% per-pixel residual once noise is removed. Ending the path scored 0.0285/0.0294, level -0.05%, RMS 0.0188; sampling about the face normal 0.0289/0.0288, -0.05%, 0.0182. Both leave about 1% residual, which is not zero and not explained yet.
 - Chosen: end the path (the Lambert BRDF with a shading normal is zero below the geometric face), which keeps smooth normals meaningful for directional lights in s5. Frozen exam after the change: 8 of 8 nonces pass, FLIP 0.019-0.031. No stratified sampling was needed.
+
+## 2026-11-16 (s5 live edits, one HoudiniRT workflow)
+
+- The approved roadmap's next renderer milestone is Phase 2A / sealed s5-live-edits.
+  The existing integrated panel/toggle remains the artist front door. Accumulation
+  batching and GPU resolve belong to Phase 2B / s6; no s6 spike is imported.
+- Dirty bits signal a possible change, not proof of a changed value. Sync compares
+  actual values and publishes immutable object-space mesh records with globally
+  unique geometry/topology versions, including deletion and recreation.
+- Execute hands over a complete latest-frame request without waiting for rendering
+  or calling Vulkan. The render callback stays available between converged frames
+  to avoid losing a request when HdRenderThread::StartRender is already active.
+- Image conversion uses detached CPU storage. A generation check and constant-time
+  storage swaps publish it; mapped readers retain old pixels until Unmap. Neither
+  pixel conversion nor retired image destruction holds the request lock.
+- Persistent device-local per-mesh buffers and BLASes separate geometry edits from
+  transform/visibility changes in TLAS instances and color changes in 48-byte rows.
+  Counters record executed operations and carry unpresented work across cancellation.
+- Installation uses a new immutable payload and replaces only the existing
+  zz_houdinirt.json pointer after validation. The prior payload and package bytes
+  remain available for rollback; other regular Houdini packages remain enabled.

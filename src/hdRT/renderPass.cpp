@@ -37,8 +37,8 @@ HdRTRenderPass::HdRTRenderPass(HdRenderIndex *index,
     , _viewMatrix(1.0f) // == identity
     , _projMatrix(1.0f) // == identity
     , _aovBindings()
-    , _colorBuffer(SdfPath::EmptyPath())
-    , _depthBuffer(SdfPath::EmptyPath())
+    , _colorBuffer(std::make_shared<HdRTRenderBuffer>(SdfPath::EmptyPath()))
+    , _depthBuffer(std::make_shared<HdRTRenderBuffer>(SdfPath::EmptyPath()))
     , _executeCount(0)
 {
 }
@@ -53,40 +53,7 @@ HdRTRenderPass::~HdRTRenderPass()
 bool
 HdRTRenderPass::IsConverged() const
 {
-    // The renderer's bindings are what the render thread writes to: the application's AOV buffers, or
-    // _colorBuffer and _depthBuffer when it gave none. Before the first Execute there are none at all.
-    const HdRenderPassAovBindingVector& bound = _renderer->GetAovBindings();
-    if (bound.empty()) {
-        return false;
-    }
-    for (size_t i = 0; i < bound.size(); ++i) {
-        if (bound[i].renderBuffer &&
-            !bound[i].renderBuffer->IsConverged()) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// The debug trace prints containers that have no stream operator of their own.
-static std::string
-_Describe(HdAovSettingsMap const& settings)
-{
-    std::string out = "{";
-    for (const auto& kv : settings) {
-        out += " " + kv.first.GetString() + "=" + TfStringify(kv.second);
-    }
-    return out + " }";
-}
-
-static std::string
-_Describe(TfTokenVector const& tokens)
-{
-    std::string out = "[";
-    for (const TfToken& t : tokens) {
-        out += " " + t.GetString();
-    }
-    return out + " ]";
+    return _renderer->IsConverged();
 }
 
 static
@@ -106,171 +73,100 @@ _GetDataWindow(HdRenderPassStateSharedPtr const& renderPassState)
 
 void
 HdRTRenderPass::_Execute(HdRenderPassStateSharedPtr const& renderPassState,
-                         TfTokenVector const &renderTags)
+                         TfTokenVector const& renderTags)
 {
+    TF_UNUSED(renderTags);
     ++_executeCount;
+    const auto observedAt = std::chrono::steady_clock::now();
+    auto* delegate = static_cast<HdRTRenderDelegate*>(GetRenderIndex()->GetRenderDelegate());
+    const bool first = !_sceneHandedOver;
+    const int bufferVersion = _sceneVersion->load();
+    const bool buffersChanged = first || bufferVersion != _lastSceneVersion;
+    _lastSceneVersion = bufferVersion;
+    bool changed = buffersChanged;
 
-    HdRTRenderDelegate *renderDelegate =
-        static_cast<HdRTRenderDelegate*>(GetRenderIndex()->GetRenderDelegate());
-
-    // Determine whether the scene has changed since the last time we rendered. If it has (or on the
-    // first Execute), flatten what Hydra synced into one world-space mesh and hand it to the renderer.
-    // This is CPU work only; the GPU upload happens on the render thread (CLAUDE.md:30).
-    bool needStartRender = false;
-    int currentSceneVersion = _sceneVersion->load();
-    if (_lastSceneVersion != currentSceneVersion || !_sceneHandedOver) {
-        needStartRender = true;
-        _lastSceneVersion = currentSceneVersion;
-    }
-    // The scene version also moves for render-buffer edits (a viewport resize). Re-flatten only when a
-    // mesh or a light really changed, or on the first Execute.
-    HdRTSceneSnapshot snapshot = renderDelegate->GetScene().Snapshot();
-    if (!_sceneHandedOver || snapshot.contentVersion != _lastContentVersion) {
-        needStartRender = true;
-        _sceneHandedOver = true;
+    const HdRTSceneSnapshot snapshot = delegate->GetScene().Snapshot();
+    if (first || snapshot.contentVersion != _lastContentVersion) {
         _lastContentVersion = snapshot.contentVersion;
-
-        std::shared_ptr<const HdRTWorldScene> world = HdRTFlattenScene(snapshot);
-        const HdRTCensus& c = world->census;
-        HDRT_DEBUG("scene v%d: %d meshes, %d triangles (%zu uploaded), box [%.6f %.6f %.6f .. %.6f %.6f %.6f], dome (%.6f, %.6f, %.6f)",
-                   currentSceneVersion, c.meshes, c.triangles, world->TriangleCount(),
-                   c.bboxMin[0], c.bboxMin[1], c.bboxMin[2], c.bboxMax[0], c.bboxMax[1], c.bboxMax[2],
-                   double(world->dome[0]), double(world->dome[1]), double(world->dome[2]));
-        _renderThread->StopRender();
-        _renderer->SetScene(std::move(world));
+        _world = HdRTBuildScene(snapshot);
+        _sceneHandedOver = true;
+        changed = true;
+        const HdRTCensus& c = _world->census;
+        HDRT_DEBUG("scene version=%llu meshes=%d triangles=%d box=[%.6f %.6f %.6f .. %.6f %.6f %.6f]",
+                   (unsigned long long)snapshot.contentVersion, c.meshes, c.triangles,
+                   c.bboxMin[0], c.bboxMin[1], c.bboxMin[2], c.bboxMax[0], c.bboxMax[1], c.bboxMax[2]);
     }
-
-    // Likewise the render settings. The furnace parameters are worked out again whenever the settings
-    // version moves, and a new render starts only if they really changed.
-    int currentSettingsVersion = renderDelegate->GetRenderSettingsVersion();
-    if (_lastSettingsVersion != currentSettingsVersion) {
-        const bool first = (_lastSettingsVersion == 0);
-        _lastSettingsVersion = currentSettingsVersion;
-
-        const HdRTFurnaceConfig config = renderDelegate->ResolveFurnaceConfig();
+    const int settingsVersion = delegate->GetRenderSettingsVersion();
+    if (first || _lastSettingsVersion != settingsVersion) {
+        _lastSettingsVersion = settingsVersion;
+        const HdRTFurnaceConfig config = delegate->ResolveFurnaceConfig();
         if (first || config != _config) {
-            _renderThread->StopRender();
             _config = config;
-            _renderer->SetConfig(_config);
-            needStartRender = true;
+            changed = true;
         }
     }
-
-    // Determine whether we need to update the renderer camera.
     const GfMatrix4d view = renderPassState->GetWorldToViewMatrix();
     const GfMatrix4d proj = renderPassState->GetProjectionMatrix();
-    if (_viewMatrix != view || _projMatrix != proj) {
+    if (first || _viewMatrix != view || _projMatrix != proj) {
         _viewMatrix = view;
         _projMatrix = proj;
-
-        _renderThread->StopRender();
-        _renderer->SetCamera(_viewMatrix, _projMatrix);
-        needStartRender = true;
+        changed = true;
     }
-
-    const GfRect2i dataWindow = _GetDataWindow(renderPassState);
-
-    if (_dataWindow != dataWindow) {
-        _dataWindow = dataWindow;
-
-        _renderThread->StopRender();
-        _renderer->SetDataWindow(dataWindow);
-
-        if (!renderPassState->GetFraming().IsValid()) {
-            // Support clients that do not use the new framing API
-            // and do not use AOVs.
-            //
-            // Note that we do not support the case of using the
-            // new camera framing API without using AOVs.
-            //
-            const GfVec3i dimensions(_dataWindow.GetWidth(),
-                                     _dataWindow.GetHeight(),
-                                     1);
-
-            _colorBuffer.Allocate(
-                dimensions,
-                HdFormatFloat32Vec4,
-                /*multiSampled=*/false);
-
-            _depthBuffer.Allocate(
-                dimensions,
-                HdFormatFloat32,
-                /*multiSampled=*/false);
-        }
-
-        needStartRender = true;
+    const GfRect2i window = _GetDataWindow(renderPassState);
+    const bool resized = first || window != _dataWindow;
+    if (resized) {
+        _dataWindow = window;
+        changed = true;
     }
-
-    // Determine whether we need to update the renderer AOV bindings.
-    //
-    // It's possible for the passed in bindings to be empty, but that's
-    // never a legal state for the renderer, so if that's the case we add
-    // a color and depth aov.
-    //
-    // If the renderer AOV bindings are empty, force a bindings update so that
-    // we always get a chance to add color/depth on the first time through.
-    HdRenderPassAovBindingVector aovBindings =
-        renderPassState->GetAovBindings();
-    if (_aovBindings != aovBindings || _renderer->GetAovBindings().empty()) {
-        _aovBindings = aovBindings;
-
-        _renderThread->StopRender();
-
-        // A binding may name its buffer by path instead of by pointer; look those up.
-        for (HdRenderPassAovBinding& binding : aovBindings) {
+    const auto aovs = renderPassState->GetAovBindings();
+    if (first || buffersChanged || _aovBindings != aovs || (aovs.empty() && resized)) {
+        _aovBindings = aovs;
+        _resolvedAovs = aovs;
+        for (auto& binding : _resolvedAovs) {
             if (!binding.renderBuffer && !binding.renderBufferId.IsEmpty()) {
-                binding.renderBuffer = static_cast<HdRenderBuffer*>(
-                    GetRenderIndex()->GetBprim(HdPrimTypeTokens->renderBuffer,
-                                               binding.renderBufferId));
+                binding.renderBuffer = static_cast<HdRenderBuffer*>(GetRenderIndex()->GetBprim(
+                    HdPrimTypeTokens->renderBuffer, binding.renderBufferId));
             }
         }
-
-        if (aovBindings.empty()) {
-            HdRenderPassAovBinding colorAov;
-            colorAov.aovName = HdAovTokens->color;
-            colorAov.renderBuffer = &_colorBuffer;
-            colorAov.clearValue =
-                VtValue(GfVec4f(0.0707f, 0.0707f, 0.0707f, 1.0f));
-            aovBindings.push_back(colorAov);
-            HdRenderPassAovBinding depthAov;
-            depthAov.aovName = HdAovTokens->depth;
-            depthAov.renderBuffer = &_depthBuffer;
-            depthAov.clearValue = VtValue(1.0f);
-            aovBindings.push_back(depthAov);
+        if (_resolvedAovs.empty()) {
+            // Never resize buffers that an old request is writing. Its shared ownership keeps the
+            // prior pair alive until the renderer consumes the replacement request.
+            _colorBuffer = std::make_shared<HdRTRenderBuffer>(SdfPath::EmptyPath());
+            _depthBuffer = std::make_shared<HdRTRenderBuffer>(SdfPath::EmptyPath());
+            const GfVec3i dimensions(window.GetWidth(), window.GetHeight(), 1);
+            _colorBuffer->Allocate(dimensions, HdFormatFloat32Vec4, false);
+            _depthBuffer->Allocate(dimensions, HdFormatFloat32, false);
+            HdRenderPassAovBinding color, depth;
+            color.aovName = HdAovTokens->color;
+            color.renderBuffer = _colorBuffer.get();
+            color.clearValue = VtValue(GfVec4f(0.0f));
+            depth.aovName = HdAovTokens->depth;
+            depth.renderBuffer = _depthBuffer.get();
+            depth.clearValue = VtValue(1.0f);
+            _resolvedAovs = {color, depth};
         }
-        _renderer->SetAovBindings(aovBindings);
-        // In general, the render thread clears aov bindings, but make sure
-        // they are cleared initially on this thread.
-        _renderer->Clear();
-        needStartRender = true;
+        changed = true;
     }
 
-    // Trace what Hydra handed over, but only when it leads to a new render.
-    if (needStartRender && HdRTDebugEnabled()) {
-        const GfVec4f vp = renderPassState->GetViewport();
-        HDRT_DEBUG("Execute #%d starts a render: framing valid=%d viewport=(%g, %g, %g, %g) data window=(%d, %d) %dx%d",
-                   _executeCount, int(renderPassState->GetFraming().IsValid()),
-                   double(vp[0]), double(vp[1]), double(vp[2]), double(vp[3]),
-                   _dataWindow.GetMinX(), _dataWindow.GetMinY(), _dataWindow.GetWidth(), _dataWindow.GetHeight());
-        HDRT_DEBUG("  world to view = %s", TfStringify(view).c_str());
-        HDRT_DEBUG("  projection    = %s", TfStringify(proj).c_str());
-        for (const HdRenderPassAovBinding& b : _renderer->GetAovBindings()) {
-            HDRT_DEBUG("  aov '%s' buffer %s %ux%u format %s multisampled=%d clear=%s settings=%s",
-                       b.aovName.GetText(), b.renderBufferId.GetText(),
-                       b.renderBuffer ? b.renderBuffer->GetWidth() : 0u,
-                       b.renderBuffer ? b.renderBuffer->GetHeight() : 0u,
-                       b.renderBuffer ? TfEnum::GetName(b.renderBuffer->GetFormat()).c_str() : "(no buffer)",
-                       b.renderBuffer ? int(b.renderBuffer->IsMultiSampled()) : 0,
-                       TfStringify(b.clearValue).c_str(), _Describe(b.aovSettings).c_str());
+    if (changed) {
+        HdRTRenderRequest request;
+        request.config = _config;
+        request.scene = _world;
+        request.view = _viewMatrix;
+        request.projection = _projMatrix;
+        request.dataWindow = _dataWindow;
+        request.aovs = _resolvedAovs;
+        request.observedAt = observedAt;
+        if (_aovBindings.empty()) {
+            request.ownedBuffers = {_colorBuffer, _depthBuffer};
         }
-        HDRT_DEBUG("  render tags = %s", _Describe(renderTags).c_str());
+        _renderer->Submit(std::move(request));
+        HDRT_DEBUG("Execute #%d publishes a request; data window %dx%d", _executeCount,
+                   _dataWindow.GetWidth(), _dataWindow.GetHeight());
     }
-
-    TF_VERIFY(!_renderer->GetAovBindings().empty(), "No aov bindings to render into");
-
-    // Only start a new render if something in the scene has changed.
-    if (needStartRender) {
-        _renderer->MarkAovBuffersUnconverged();
+    // Safe wakeup when idle; while active the renderer observes the new generation itself.
+    // Also restarts after render-buffer lifetime synchronization outside Execute.
+    if (!_renderer->IsConverged()) {
         _renderThread->StartRender();
     }
 }

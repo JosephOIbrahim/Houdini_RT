@@ -23,9 +23,8 @@ class HdRTScene;
 ///
 /// \class HdRTRenderParam
 ///
-/// Passed to every prim during Sync(). Anything the render thread reads or writes (render buffers, and
-/// from step 4 the meshes and lights) must call AcquireSceneForEdit() before it changes, so an edit never
-/// races a render. Prims publish their CPU-side data into the scene it carries.
+/// Render-buffer lifetime changes use AcquireSceneForEdit before reallocating/destructing storage.
+/// Meshes and lights publish immutable CPU data independently; they never stop the render thread.
 ///
 class HdRTRenderParam final : public HdRenderParam
 {

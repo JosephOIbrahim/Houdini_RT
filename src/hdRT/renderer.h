@@ -29,12 +29,30 @@
 #include "world.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+class HdRTRenderBuffer;
+
+/// A complete, immutable handoff. Output lifetimes are synchronized by Hydra buffer Sync/Finalize;
+/// anonymous fallback buffers are retained here across viewport resizes.
+struct HdRTRenderRequest
+{
+    HdRTFurnaceConfig config;
+    std::shared_ptr<const HdRTWorldScene> scene;
+    GfMatrix4d view{1.0}, projection{1.0};
+    GfRect2i dataWindow;
+    HdRenderPassAovBindingVector aovs;
+    std::vector<std::shared_ptr<HdRTRenderBuffer>> ownedBuffers;
+    std::chrono::steady_clock::time_point observedAt;
+    uint64_t generation = 0;
+};
 
 /// A snapshot of what the renderer last did, safe to read from any thread.
 struct HdRTRenderStats
@@ -50,6 +68,11 @@ struct HdRTRenderStats
     double renderSeconds = 0.0;
     std::string error;              ///< empty unless the last render failed
     HdRTCensus census;              ///< what Hydra synced, as of the last SetScene
+    HdRTVkEditStats edits;
+    double editMilliseconds = 0.0;
+    uint64_t sceneGeneration = 0;
+    uint64_t presentedGeneration = 0;
+    std::string sceneMemory;
 };
 
 class HdRTRenderer final
@@ -61,27 +84,14 @@ public:
     /// Where the compute kernel's SPIR-V lives on disk. Set once, before the first render.
     void SetShaderPath(const std::string& spvPath);
 
-    // ---- called by the render pass on the app thread, always with the render thread stopped ---------
-
-    void SetConfig(const HdRTFurnaceConfig& config);
-    /// The world-space scene the next render uses (uploaded on the render thread, C5), and its census.
-    void SetScene(std::shared_ptr<const HdRTWorldScene> scene);
-    void SetCamera(const GfMatrix4d& viewMatrix, const GfMatrix4d& projMatrix);
-
-    /// The pixels to render, y-down as Hydra gives it. Must lie inside the render buffers.
-    void SetDataWindow(const GfRect2i& dataWindow);
-
-    void SetAovBindings(HdRenderPassAovBindingVector const& aovBindings);
-    HdRenderPassAovBindingVector const& GetAovBindings() const { return _aovBindings; }
-
-    /// Fills every bound buffer with its clear value and marks it unconverged.
-    void Clear();
-    void MarkAovBuffersUnconverged();
+    /// Publish without waiting for the rendering/GPU thread. Latest complete request wins.
+    void Submit(HdRTRenderRequest request);
+    bool IsConverged() const;
 
     // ---- the render thread's body ---------------------------------------------------------------
 
-    /// Renders until the image has `spp` samples per pixel or a stop is requested. Never blocks the app
-    /// thread and never throws: a failure is logged, recorded in the stats, and ends the render.
+    /// Consumes complete requests until stopped, waiting between converged images. GPU work and
+    /// image conversion stay on this thread; failures are logged and recorded in the stats.
     void Render(HdRenderThread* renderThread);
 
     // ---- teardown --------------------------------------------------------------------------------
@@ -96,14 +106,25 @@ private:
     HdRTRenderer& operator=(const HdRTRenderer&) = delete;
 
     bool _ValidateAovBindings();
+    void _RenderFrame(HdRenderThread* renderThread);
+    bool _Superseded() const;
+    void SetConfig(const HdRTFurnaceConfig& config);
+    void SetScene(std::shared_ptr<const HdRTWorldScene> scene);
+    void SetCamera(const GfMatrix4d& viewMatrix, const GfMatrix4d& projMatrix);
+    void SetDataWindow(const GfRect2i& dataWindow);
+    void SetAovBindings(HdRenderPassAovBindingVector const& aovBindings);
+    std::unique_ptr<HdRTRenderBuffer> _CreateClearedAov(size_t index);
+    void MarkAovBuffersUnconverged();
     void _MarkAovBuffersConverged();
-    void _WriteAovs(int completedSamples, unsigned int x0, unsigned int y0, unsigned int w, unsigned int h);
+    bool _WriteAovs(int completedSamples, unsigned int x0, unsigned int y0,
+                    unsigned int w, unsigned int h, std::string* error);
     void _Fail(const std::string& what);
 
     std::string _spvPath;
     HdRTFurnaceConfig _config;
-    std::shared_ptr<const HdRTWorldScene> _scene;           // set by the render pass (thread stopped)
+    std::shared_ptr<const HdRTWorldScene> _scene;           // active render-thread snapshot
     std::shared_ptr<const HdRTWorldScene> _uploadedScene;   // what the GPU holds; render thread only
+    HdRTVkEditStats _unpresentedEdits; // work survives cancelled requests until an image is published
 
     GfMatrix4d _viewMatrix;
     GfMatrix4d _projMatrix;
@@ -127,6 +148,12 @@ private:
     mutable std::mutex _statsMutex;
     HdRTRenderStats _stats;
     std::atomic<int> _completedSamples;
+    mutable std::mutex _requestMutex;
+    std::condition_variable _requestReady;
+    std::shared_ptr<const HdRTRenderRequest> _requested;
+    std::shared_ptr<const HdRTRenderRequest> _activeRequest;
+    std::atomic<uint64_t> _requestedGeneration{0};
+    std::atomic<uint64_t> _completedGeneration{0};
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

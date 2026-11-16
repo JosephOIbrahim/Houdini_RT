@@ -1,5 +1,36 @@
 # Progress
 
+## 2026-11-16 — live scene edits (Phase 2A / s5)
+
+- One integrated HoudiniRT artist workflow remains: existing target viewer,
+  Enable, Pause/Resume and previous-renderer restoration. No Python controller
+  changes in this milestone; its focused 86-test regression passed.
+- Immutable value-compared object-space mesh snapshots replace full-scene
+  flattening. Device-local per-mesh buffers/BLASes persist; transforms and
+  visibility change TLAS instances, color changes a 48-byte table row, and
+  geometry changes touch only the changed mesh. Exact world census is cached.
+- Execute publishes the latest complete request without Vulkan or waiting for
+  rendering. Detached image storage and generation-checked swaps prevent stale
+  publication while mapped readers retain stable pixels. Unpresented edit work
+  survives cancellation in the actual operation counters.
+- Sealed s5 GREEN: nonce `12094041924750763570`, s4 nonce
+  `317460601411944871`, unchanged source/exam hashes. All 22 live/fresh image
+  comparisons were exact. Median edit latency 0.8874/0.9171 ms at 1M/4M;
+  exact operation/upload counters and device-local placement passed. s4/Karma
+  FLIP p99 0.0249 < 0.045, level error 0.00056; Vulkan validation silent.
+- Additional GPU probe: 24 states passed, including insertion/deletion, path
+  reuse, empty/failure recovery, mirrored transforms and singular-transform
+  recovery. CPU snapshot and concurrent mapped-buffer publication probes passed.
+  Reproducible probes are under `tests/live_edits/`.
+- Exact tested payload installed as `s5-h22.0.429-48af10c1bed3`; 87 files
+  verified, 14 other registrations unchanged, old version/package retained.
+  Regular GUI acceptance PASS: eight viewport EXRs checked edit visibility,
+  insertion/deletion and combined paused edits after Resume. One delegate,
+  generations 1–8; pause held generation 7 for 2.25 seconds. Panel recreation,
+  target isolation and restoration to originally paused Karma CPU passed.
+- Evidence and scope: `docs/live-edits-verification-2026-11-16.md`.
+  Phase 2B/s6 GPU accumulation, batching and resolve remain the next milestone.
+
 ## 2026-11-16 — integrated viewer controls
 
 - Combined the renderer integration baseline with the consolidated Python

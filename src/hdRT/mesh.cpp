@@ -14,6 +14,7 @@
 #include "log.h"
 #include "renderParam.h"
 #include "scene.h"
+#include "world.h"
 
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/changeTracker.h"
@@ -95,10 +96,13 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
     HdRTRenderParam *param = static_cast<HdRTRenderParam*>(renderParam);
     SdfPath const& id = GetId();
 
-    // Stop the render before anything it reads changes; the render pass starts a fresh one afterwards.
-    param->AcquireSceneForEdit();
-
-    bool geometryDirty = false;
+    // Time-sampled attributes can be dirty without changing their values.
+    // Immutable publications let Sync run without touching the render thread.
+    const bool first = !_published;
+    bool geometryDirty = first;
+    bool topologyDirty = first;
+    bool transformDirty = first;
+    bool changed = first;
 
     // Instanced rprims (point instancers, native instancing) are not expanded yet: say so once.
     _UpdateInstancer(sceneDelegate, dirtyBits);
@@ -110,82 +114,116 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
 
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
         // A value of another type (or none) becomes an empty array, caught by the check below.
-        _points = sceneDelegate->Get(id, HdTokens->points).GetWithDefault<VtVec3fArray>(VtVec3fArray());
-        geometryDirty = true;
+        const VtVec3fArray points = sceneDelegate->Get(id, HdTokens->points)
+            .GetWithDefault<VtVec3fArray>(VtVec3fArray());
+        if (points != _points) {
+            _points = points;
+            geometryDirty = changed = true;
+        }
     }
 
     if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
         // The polygons as authored. Refinement is not supported, so the refine level is left at 0.
-        _topology = HdMeshTopology(GetMeshTopology(sceneDelegate), 0);
-        _adjacencyValid = false;
-        geometryDirty = true;
-
-        // Triangulate: a fan, n - 2 triangles per n-sided face. The primitive params are not kept.
-        HdMeshUtil meshUtil(&_topology, id);
-        VtIntArray primitiveParams;
-        _triangles = VtVec3iArray();
-        meshUtil.ComputeTriangleIndices(&_triangles, &primitiveParams);
+        const HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
+        if (!(topology == _topology)) {
+            _topology = topology;
+            _adjacencyValid = false;
+            topologyDirty = geometryDirty = changed = true;
+        }
     }
 
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id)) {
-        _transform = sceneDelegate->GetTransform(id);
+        const GfMatrix4d transform = sceneDelegate->GetTransform(id);
+        if (transform != _transform) {
+            _transform = transform;
+            transformDirty = changed = true;
+        }
     }
 
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
+        const bool visible = IsVisible();
         _UpdateVisibility(sceneDelegate, dirtyBits);
+        changed = changed || visible != IsVisible();
     }
 
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->displayColor)) {
         VtValue const value = GetPrimvar(sceneDelegate, HdTokens->displayColor);
-        GfVec3f c;
-        if (_ReadDisplayColor(value, &c)) {
+        GfVec3f c(0.18f);
+        _ReadDisplayColor(value, &c);
+        if (c != _albedo) {
             _albedo = c;
-        } else {
-            _albedo = GfVec3f(0.18f);
+            changed = true;
         }
         HDRT_DEBUG("mesh %s displayColor arrives as %s -> albedo (%.4f, %.4f, %.4f)",
                    id.GetText(), value.GetTypeName().c_str(), _albedo[0], _albedo[1], _albedo[2]);
     }
 
-    // Every index the topology uses must name a point that exists. A points-only edit can change the
-    // count without a topology edit, and malformed USD can index past the end; either would send the
-    // triangle indices and Hd_SmoothNormals out of bounds. Such a mesh is published empty, with a warning.
+    if (!changed) {
+        *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
+        return;
+    }
+
+    // Validate before triangulation or smooth normals. A points-only edit may
+    // invalidate the old topology; a later edit can make that same mesh valid.
     if (geometryDirty) {
-        const int need = _topology.GetNumPoints();
-        if (int(_points.size()) < need) {
-            HdRTLog("WARNING: mesh %s has %zu points but its topology uses %d; it is not rendered",
-                    id.GetText(), _points.size(), need);
-            auto empty = std::make_shared<HdRTMeshData>();
-            empty->transform = _transform;
-            empty->visible = false;
-            param->GetScene()->SetMesh(id, std::move(empty));
-            *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
-            return;
+        const bool wasValid = _geometryValid;
+        _geometryValid = true;
+        size_t count = 0;
+        const VtIntArray& indices = _topology.GetFaceVertexIndices();
+        for (int n : _topology.GetFaceVertexCounts()) {
+            if (n < 0 || size_t(n) > indices.size() - count) {
+                _geometryValid = false;
+                break;
+            }
+            count += size_t(n);
+        }
+        if (count != indices.size())
+            _geometryValid = false;
+        for (int index : indices) {
+            if (index < 0 || size_t(index) >= _points.size()) {
+                _geometryValid = false;
+                break;
+            }
+        }
+        if (_geometryValid) {
+            if (topologyDirty || !wasValid) {
+                HdMeshUtil meshUtil(&_topology, id);
+                VtIntArray primitiveParams;
+                _triangles = VtVec3iArray();
+                meshUtil.ComputeTriangleIndices(&_triangles, &primitiveParams);
+            }
+            if (!_adjacencyValid) {
+                _adjacency.BuildAdjacencyTable(&_topology);
+                _adjacencyValid = true;
+            }
+            _normals = Hd_SmoothNormals::ComputeSmoothNormals(
+                &_adjacency, static_cast<int>(_points.size()), _points.cdata());
+        } else {
+            HdRTLog("WARNING: mesh %s has invalid point/topology indices; it is not rendered", id.GetText());
         }
     }
 
-    // Smooth vertex normals, always (see the class comment): the adjacency table follows the topology,
-    // the normals follow the points.
+    // Vt arrays are shared copy-on-write. Transform/visibility/colour edits
+    // publish only a small record; unchanged geometry remains shared.
+    auto data = _published ? std::make_shared<HdRTMeshData>(*_published)
+                           : std::make_shared<HdRTMeshData>();
     if (geometryDirty) {
-        if (!_adjacencyValid) {
-            _adjacency.BuildAdjacencyTable(&_topology);
-            _adjacencyValid = true;
-        }
-        _normals = Hd_SmoothNormals::ComputeSmoothNormals(
-            &_adjacency, static_cast<int>(_points.size()), _points.cdata());
+        data->points = _geometryValid ? _points : VtVec3fArray();
+        data->normals = _geometryValid ? _normals : VtVec3fArray();
+        data->triangles = _geometryValid ? _triangles : VtVec3iArray();
+        data->geometryVersion = HdRTNextMeshVersion();
+        if (topologyDirty)
+            data->topologyVersion = HdRTNextMeshVersion();
     }
-
-    // Publish a fresh, immutable copy. The render pass picks it up through the scene version.
-    auto data = std::make_shared<HdRTMeshData>();
-    data->points    = _points;
-    data->normals   = _normals;
-    data->triangles = _triangles;
     data->transform = _transform;
     data->albedo    = _albedo;
-    data->visible   = IsVisible();
+    data->visible   = IsVisible() && _geometryValid;
+    if (geometryDirty || transformDirty)
+        HdRTUpdateMeshCensus(data.get());
     HDRT_DEBUG("mesh %s synced: %zu points, %zu triangles, visible %d",
                id.GetText(), data->points.size(), data->triangles.size(), int(data->visible));
-    param->GetScene()->SetMesh(id, std::move(data));
+    _published = std::move(data);
+    param->GetScene()->SetMesh(id, _published);
 
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
 }
@@ -194,8 +232,8 @@ void
 HdRTMesh::Finalize(HdRenderParam *renderParam)
 {
     HdRTRenderParam *param = static_cast<HdRTRenderParam*>(renderParam);
-    param->AcquireSceneForEdit();
     param->GetScene()->RemoveMesh(GetId());
+    _published.reset();
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

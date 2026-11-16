@@ -31,7 +31,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 /// Hydra calls _Execute on the app thread every time it wants the image brought up to date. Execute never
 /// renders and never waits for a render: it compares what Hydra wants now (camera, window, AOV buffers,
 /// settings) with what the background render was started with, and only when something differs does it
-/// stop the render thread, hand over the new state and start a fresh render.
+/// publish a complete immutable request consumed by the background renderer between passes.
 ///
 class HdRTRenderPass final : public HdRenderPass
 {
@@ -73,7 +73,8 @@ private:
     // The last scene version we rendered with.
     int _lastSceneVersion;
     bool _sceneHandedOver = false;   // the first Execute always hands a scene over
-    uint64_t _lastContentVersion = 0;  // HdRTScene content version last flattened
+    uint64_t _lastContentVersion = 0;
+    std::shared_ptr<const HdRTWorldScene> _world;
 
     // The last settings version we rendered with, and the furnace parameters it resolved to.
     int _lastSettingsVersion;
@@ -94,8 +95,9 @@ private:
 
     // If no attachments are provided, provide an anonymous renderbuffer for
     // color and depth output.
-    HdRTRenderBuffer _colorBuffer;
-    HdRTRenderBuffer _depthBuffer;
+    std::shared_ptr<HdRTRenderBuffer> _colorBuffer;
+    std::shared_ptr<HdRTRenderBuffer> _depthBuffer;
+    HdRenderPassAovBindingVector _resolvedAovs;
 
     // Counts Execute calls, for the debug trace only.
     int _executeCount;

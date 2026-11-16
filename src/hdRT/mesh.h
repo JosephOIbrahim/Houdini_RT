@@ -16,8 +16,11 @@
 #include "pxr/imaging/hd/mesh.h"
 #include "pxr/imaging/hd/meshTopology.h"
 #include "pxr/imaging/hd/vertexAdjacency.h"
+#include <memory>
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+struct HdRTMeshData;
 
 ///
 /// \class HdRTMesh
@@ -60,6 +63,8 @@ private:
     VtVec3iArray       _triangles;
     VtVec3fArray       _normals;
     bool               _warnedInstanced = false;
+    bool               _geometryValid = false;
+    std::shared_ptr<const HdRTMeshData> _published;
 
     HdRTMesh(const HdRTMesh&)             = delete;
     HdRTMesh &operator =(const HdRTMesh&) = delete;

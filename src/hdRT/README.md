@@ -3,15 +3,15 @@
 A Hydra render delegate for Houdini 22. Houdini (the Solaris viewport, or `husk` on the command line)
 loads it as a renderer called **HoudiniRT**.
 
-**Step 4 state: first light.** The delegate syncs polygon meshes (points, topology, transform,
-visibility, constant `displayColor`) and one untextured dome light from Hydra, flattens them to one
-world-space mesh, and path-traces it on the GPU with Vulkan ray queries: Lambertian surfaces, the dome
+**Step 5: live scene edits.** The delegate syncs polygon meshes (points, topology, transform,
+visibility, constant `displayColor`) and untextured dome lights from Hydra. Meshes retain object-space
+geometry and individual acceleration structures on the GPU, traced with Vulkan ray queries: Lambertian surfaces, the dome
 lighting every path that leaves the scene, never visible to the camera. Not yet: materials, textures,
 other lights, instancing, subdivision, AOVs other than colour.
 
 ## Build
 
-The sealed exam (`verify/s4_firstlight.sh`) builds it like this (from the repo root, Git Bash,
+The sealed exam (`verify/s5_liveedits.sh`, including the s4 regression) builds it like this (from the repo root, Git Bash,
 `VULKAN_SDK` set):
 
 ```
@@ -32,8 +32,14 @@ set PXR_PLUGINPATH_NAME=<repo>\build\plugin_stage
 husk -R HdRTRendererPlugin -r 256 256 -o out.exr stage.usda
 ```
 
-In Houdini, start it with the same `PXR_PLUGINPATH_NAME` and pick **HoudiniRT** in the Solaris
-viewport's renderer menu. (The viewport has not been exercised yet; `husk` has.)
+For an artist installation, use the unified HoudiniRT package and **HoudiniRT** panel. Enable selects
+HoudiniRT in the chosen Solaris viewer; Pause/Resume uses that viewer's native render state; Off restores
+its previous renderer and pause state. The native renderer menu remains available for direct selection.
+
+Edit ordinary scene parameters while rendering. Transforms and visibility update the instance structure;
+points and topology update only the changed mesh; constant displayColor updates its table row. Edits
+made while paused remain pending until Resume. The last image stays visible until a current replacement
+is ready. Insertion and deletion use the same scene handoff, without a separate toggle or restart command.
 
 What you will see: the meshes, Lambert-shaded by `displayColor` under the dome, on a transparent
 background (the dome lights the scene but is not drawn). `verify/s4_firstlight.sh` checks the census,
@@ -87,6 +93,12 @@ newer validation layer. It is not an error and the exam does not treat it as one
 geometry), `hrt_device`, `hrt_settings_source`, `hrt_validation_active`, `hrt_validation_errors`,
 `numCompletedSamples`, `percentDone`, `totalClockTime`. `husk` writes each of them into the EXR header.
 
+Live-edit diagnostics add `hrt_blas_builds`, `hrt_blas_refits`, `hrt_tlas_builds`, `hrt_tlas_updates`,
+`hrt_geometry_upload_bytes`, `hrt_table_upload_bytes`, `hrt_edit_ms` and `hrt_scene_memory`.
+Counters measure executed work carried through cancelled requests until an image is published.
+`hrt_scene_generation` and `hrt_presented_generation` distinguish the requested frame from the shown
+frame. Debug logs include renderer identity and generation on each request and first/final publication.
+
 ## Files
 
 | File | What it is |
@@ -96,11 +108,11 @@ geometry), `hrt_device`, `hrt_settings_source`, `hrt_validation_active`, `hrt_va
 | `renderDelegate.*` | prim types, render pass, settings, stats, pause and resume, owns the render thread |
 | `renderPass.*` | runs on Houdini's thread; restarts the background render when camera, size, buffers or settings change. Never renders, never waits |
 | `renderBuffer.*` | the CPU image Houdini reads back |
-| `renderParam.h` | lets a prim stop the render thread before it changes something; carries the scene |
+| `renderParam.h` | synchronizes render-buffer lifetime outside Execute; carries the immutable scene |
 | `mesh.*` | the mesh rprim: triangulates with `HdMeshUtil`, smooth normals with `Hd_SmoothNormals` |
 | `light.*` | the dome light sprim: radiance = intensity * 2^exposure * color |
 | `scene.h` | the CPU-side scene prims publish into during Sync |
-| `world.*` | flattens the scene to one world-space mesh in Execute, and takes the census |
+| `world.*` | combines immutable mesh records and cached exact world bounds; never flattens geometry |
 | `renderer.*` | what the render thread runs: one sample per pixel per pass, pause point, stop point, write the average |
 | `settings.*` | seed, spp and bounces, and where they come from |
 | `vkFurnace.*` | all the Vulkan: instance, device, scene upload and acceleration structures, pipeline, dispatch, teardown. No USD in it |
@@ -131,5 +143,5 @@ furnace_standalone furnace.spv --empty
 - Pause and resume are checked by the exam only by reading the source; Joe checked live pause in the
   Solaris viewport on 2026-11-11 (DECISIONS.md).
 - AOVs other than colour (depth, ids, normals) are cleared and never written.
-- The running average is copied to Houdini's buffer on the CPU after every pass. Fine at this size, to
-  be revisited when the viewport runs at full resolution.
+- GPU accumulation is read back each pass. The CPU publishes a staged running average about thirty
+  times a second. GPU accumulation/batching/resolve improvements belong to the next performance phase.

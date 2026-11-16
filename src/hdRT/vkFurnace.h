@@ -15,6 +15,28 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
+
+/// Borrowed immutable object-space data. Version tokens must change after remove/re-add.
+struct HdRTVkMesh
+{
+    std::string id;
+    uint64_t geometryVersion = 0, topologyVersion = 0;
+    const float* positions = nullptr;
+    const float* normals = nullptr;
+    size_t vertexCount = 0;
+    const uint32_t* indices = nullptr;
+    size_t triangleCount = 0;
+    float transform[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    float albedo[4] = {0.18f, 0.18f, 0.18f, 1.0f};
+    bool visible = true;
+};
+
+struct HdRTVkEditStats
+{
+    uint64_t blasBuilds = 0, blasRefits = 0, tlasBuilds = 0, tlasUpdates = 0;
+    uint64_t geometryUploadBytes = 0, tableUploadBytes = 0;
+};
 
 /// One image to render. Matrices are in GfMatrix4d memory order (row-major, row vectors), which a GLSL
 /// mat4 reads as the equivalent column-vector matrix, so they are uploaded as they are.
@@ -58,10 +80,12 @@ public:
 
     bool IsReady() const;
 
-    /// Replaces the scene: one world-space triangle mesh. positions and normals hold 3 floats per vertex,
-    /// indices 3 per triangle, albedo 4 floats (rgba) per triangle. Builds one bottom-level structure and a
-    /// top-level structure with one identity instance, and waits for both. An empty mesh (no triangles)
-    /// leaves no scene: every pass then renders black with alpha 0. Call between passes, never during one.
+    /// Apply actual deltas from a complete current mesh view. No pointers are retained.
+    /// All persistent scene buffers are device-local; stats count submitted work for this call.
+    bool SetMeshes(const std::vector<HdRTVkMesh>& meshes, HdRTVkEditStats* stats, std::string* error);
+
+    /// Compatibility wrapper for one identity mesh with uniform per-triangle albedo.
+    /// Nonuniform per-triangle albedo must be supplied as separate SetMeshes entries.
     bool SetScene(const float* positions, const float* normals, size_t vertexCount, const uint32_t* indices,
                   const float* albedo, size_t triangleCount, std::string* error);
 
@@ -72,6 +96,7 @@ public:
 
     /// Adds one sample per pixel to the accumulation and waits for the GPU to finish.
     bool RenderPass(uint32_t passIndex, std::string* error);
+    double LastPassSubmitSeconds() const;
 
     /// width * height * 4 floats: rgb = summed radiance, a = number of samples whose camera ray hit the
     /// box. Row 0 is the bottom of the image. Valid between BeginFrame and the next BeginFrame/Destroy.

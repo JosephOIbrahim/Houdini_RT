@@ -59,7 +59,6 @@ HdResourceRegistrySharedPtr HdRTRenderDelegate::_resourceRegistry;
 static void _RenderCallback(HdRTRenderer *renderer,
                             HdRenderThread *renderThread)
 {
-    renderer->Clear();
     renderer->Render(renderThread);
 }
 
@@ -266,6 +265,16 @@ HdRTRenderDelegate::GetRenderStats() const
     stats["hrt_spp"] = s.spp;
     // The bounce budget this render used; verify/s4_firstlight.sh compares it with the count it drew.
     stats["hrt_bounces"] = s.bounces;
+    stats["hrt_blas_builds"] = int64_t(s.edits.blasBuilds);
+    stats["hrt_blas_refits"] = int64_t(s.edits.blasRefits);
+    stats["hrt_tlas_builds"] = int64_t(s.edits.tlasBuilds);
+    stats["hrt_tlas_updates"] = int64_t(s.edits.tlasUpdates);
+    stats["hrt_geometry_upload_bytes"] = int64_t(s.edits.geometryUploadBytes);
+    stats["hrt_table_upload_bytes"] = int64_t(s.edits.tableUploadBytes);
+    stats["hrt_edit_ms"] = s.editMilliseconds;
+    stats["hrt_scene_memory"] = s.sceneMemory;
+    stats["hrt_scene_generation"] = int64_t(s.sceneGeneration);
+    stats["hrt_presented_generation"] = int64_t(s.presentedGeneration);
     // The translation census of what Hydra synced; verify/s4_firstlight.sh compares it with its own census
     // of the stage. Counts are ints, the box is double (husk keeps both types in the EXR header).
     stats["hrt_mesh_count"] = s.census.meshes;

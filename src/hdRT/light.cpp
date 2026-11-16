@@ -46,9 +46,6 @@ HdRTLight::Sync(HdSceneDelegate *sceneDelegate,
         return;
     }
 
-    // Stop the render before the lighting changes; the render pass starts a fresh one afterwards.
-    param->AcquireSceneForEdit();
-
     const float intensity = sceneDelegate->GetLightParamValue(
         id, HdLightTokens->intensity).GetWithDefault(1.0f);
     const float exposure = sceneDelegate->GetLightParamValue(
@@ -75,7 +72,6 @@ HdRTLight::Finalize(HdRenderParam *renderParam)
 {
     HdRTRenderParam *param = static_cast<HdRTRenderParam*>(renderParam);
     if (param && !GetId().IsEmpty()) {
-        param->AcquireSceneForEdit();
         param->GetScene()->RemoveDome(GetId());
     }
 }

@@ -116,6 +116,80 @@ HdRTRenderBuffer::Allocate(GfVec3i const& dimensions,
     return true;
 }
 
+void*
+HdRTRenderBuffer::Map()
+{
+    std::lock_guard<std::mutex> lock(_storageMutex);
+    if (_stagingConsumed)
+        return nullptr;
+    ++_mappers;
+    return _buffer.data();
+}
+
+void
+HdRTRenderBuffer::Unmap()
+{
+    std::list<std::vector<uint8_t>> released;
+    {
+        std::lock_guard<std::mutex> lock(_storageMutex);
+        if (!TF_VERIFY(_mappers.load() > 0, "Unmap requires a matching Map"))
+            return;
+        if (--_mappers == 0)
+            released.splice(released.end(), _retired);
+    }
+    // Potentially large pixel allocations are released without either the
+    // storage lock or the renderer's publication lock (Unmap is a reader call).
+}
+
+std::unique_ptr<HdRTRenderBuffer>
+HdRTRenderBuffer::CreateStagingBuffer() const
+{
+    GfVec3i dimensions;
+    HdFormat format;
+    bool multiSampled;
+    {
+        std::lock_guard<std::mutex> lock(_storageMutex);
+        if (_stagingConsumed || _format == HdFormatInvalid)
+            return nullptr;
+        dimensions = GfVec3i(int(_width), int(_height), 1);
+        format = _format;
+        multiSampled = _multiSampled;
+    }
+    auto staging = std::make_unique<HdRTRenderBuffer>(SdfPath::EmptyPath());
+    if (!staging->Allocate(dimensions, format, multiSampled))
+        return nullptr;
+    staging->_retirementSlot.emplace_back();
+    return staging;
+}
+
+bool
+HdRTRenderBuffer::PublishFrom(HdRTRenderBuffer& staging)
+{
+    if (&staging == this)
+        return false;
+    std::scoped_lock lock(_storageMutex, staging._storageMutex);
+    if (staging._stagingConsumed || staging._retirementSlot.empty() ||
+        staging._mappers.load() != 0 || _width != staging._width ||
+        _height != staging._height || _format != staging._format ||
+        _multiSampled != staging._multiSampled || _buffer.size() != staging._buffer.size())
+        return false;
+    if (_mappers.load() != 0) {
+        // Keep the old front stable for every outstanding reader. The empty
+        // retirement node was allocated with staging, before the generation lock.
+        staging._retirementSlot.front().swap(_buffer);
+        _buffer.swap(staging._buffer);
+        _retired.splice(_retired.end(), staging._retirementSlot);
+    } else {
+        // The caller destroys this staging owner only after its generation lock
+        // is released; no pixel allocation is freed inside PublishFrom.
+        _buffer.swap(staging._buffer);
+    }
+    staging._stagingConsumed = true;
+    staging._width = staging._height = 0;
+    staging._format = HdFormatInvalid;
+    return true;
+}
+
 template<typename T>
 static void _WriteOutput(HdFormat format, uint8_t *dst,
                          size_t valueComponents, T const* value)

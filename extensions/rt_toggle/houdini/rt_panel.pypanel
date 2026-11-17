@@ -997,13 +997,15 @@ class RT_TogglePanel(QtWidgets.QWidget):
                   "unavailable": "Unavailable", "error": "State unavailable"}
         self._renderer_label.setText(status.renderer or "—")
         self._render_state_label.setText(labels.get(status.state, status.state))
-        restoring = status.owned
+        restoring = status.can_restore
+        cleanup_only = status.cleanup_pending and not status.owned
         active = status.active
         pending_labels = {"enable": "Enabling HoudiniRT…", "pause": "Pausing…",
                           "resume": "Resuming…", "restore": "Restoring previous renderer…"}
         self._render_toggle.setText(
             pending_labels[status.pending] if status.pending in ("enable", "restore")
-            else "Turn off — restore previous renderer" if restoring
+            else "Restore reference grid" if cleanup_only
+            else "Turn off — restore previous renderer" if status.owned
             else "HoudiniRT already selected" if active else "Render with HoudiniRT"
         )
         self._render_toggle.setEnabled(
@@ -1018,7 +1020,7 @@ class RT_TogglePanel(QtWidgets.QWidget):
         message = status.message
         if status.busy:
             message += " Waiting for Houdini to confirm the change."
-        if restoring:
+        if status.owned:
             message += " Previous renderer: %s." % status.previous_renderer
         elif active:
             message += " Enabled outside this controller; no previous renderer recorded."

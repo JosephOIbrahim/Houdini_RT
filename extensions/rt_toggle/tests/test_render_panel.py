@@ -124,3 +124,49 @@ def test_pending_restore_keeps_actual_renderer_until_confirmation():
         "off", "view", "Karma CPU", "Karma CPU", True, error="Restore timed out"))
     assert ui._render_error.text == "Restore timed out"
     assert ui._render_toggle.enabled
+
+
+def test_grid_cleanup_retry_keeps_native_off_state_and_selected_viewer():
+    target = object()
+    calls = []
+    cleaned = RenderStatus("off", "view", "Karma XPU")
+    controller = SimpleNamespace(
+        toggle=lambda viewer: calls.append(viewer) or cleaned,
+    )
+    ui = panel(controller, target)
+    ui._refresh_render_state(RenderStatus(
+        "off", "view", "Karma XPU", cleanup_pending=True,
+        error="Could not restore the reference grid."))
+    assert ui._renderer_label.text == "Karma XPU"
+    assert ui._render_state_label.text == "Off"
+    assert ui._render_toggle.text == "Restore reference grid"
+    assert ui._render_toggle.enabled
+    assert not ui._render_pause.enabled
+    assert "Previous renderer:" not in ui._render_message.text
+    assert ui._render_error.text == "Could not restore the reference grid."
+    ui._on_render_toggle()
+    assert calls == [target]
+    assert ui._render_state_label.text == "Off"
+    assert ui._render_toggle.text == "Render with HoudiniRT"
+    assert ui._render_error.text == ""
+
+
+def test_grid_cleanup_retry_remains_available_when_renderer_readback_fails():
+    ui = panel(None, object())
+    ui._refresh_render_state(RenderStatus(
+        "error", cleanup_pending=True, error="Renderer readback failed."))
+    assert ui._render_state_label.text == "State unavailable"
+    assert ui._render_toggle.text == "Restore reference grid"
+    assert ui._render_toggle.enabled
+    assert not ui._render_pause.enabled
+    assert "Previous renderer:" not in ui._render_message.text
+
+
+def test_owned_renderer_with_grid_cleanup_keeps_full_restoration_action():
+    ui = panel(None, object())
+    ui._refresh_render_state(RenderStatus(
+        "active", "view", "HoudiniRT", "Karma CPU", True,
+        cleanup_pending=True))
+    assert ui._render_toggle.text == "Turn off — restore previous renderer"
+    assert ui._render_toggle.enabled
+    assert "Previous renderer: Karma CPU." in ui._render_message.text

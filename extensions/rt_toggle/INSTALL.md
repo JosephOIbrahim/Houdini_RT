@@ -1,6 +1,6 @@
 # HoudiniRT controls — Houdini 22 install
 
-## Renderer workflow (v0.2.0)
+## Renderer workflow (v0.2.1)
 
 The renderer controls do not require a Python sidecar or `HOUDINI_RT_ROOT`.
 Use the matching Houdini 22 renderer build and the extension from the same
@@ -22,6 +22,10 @@ integrated source checkout. In Houdini, find your preferences directory with
 6. Restart Houdini. Open **New Pane Tab Type → HoudiniRT**, choose the intended
    Solaris viewer, and click **Render with HoudiniRT**. Pause/Resume and Off
    operate on that viewer. No runtime config or model connection is needed.
+
+On build 22.0.429, these controls temporarily hide the chosen viewer's reference
+grid to avoid a native camera-edit stall and restore it on Off or manual renderer
+switch. Existing Houdini processes need a restart to load updated Python controls.
 
 The stable panel interface ID remains `RT_Toggle` to preserve saved desktops.
 The shelf adds Pause / Resume RT. `rt_radial.build()` registers the optional

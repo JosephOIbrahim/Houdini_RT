@@ -13,6 +13,19 @@ actually run.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-16
+
+### Fixed
+
+- Avoid Houdini 22.0.429's expensive reference-floor draw during scripted camera
+  edits by temporarily hiding the owned viewer's reference grid. The integrated
+  toggle restores its original visibility on Off or external renderer takeover,
+  including with the panel closed, and respects manual visibility changes.
+- Preserve mixed split-view grid visibility across Houdini's deferred parent-grid
+  update, including per-view changes made by the artist while rendering.
+- Camera projection, clipping, render quality and other viewers are unchanged.
+  The renderer DLL and GPU kernels are unchanged from the GPU accumulation build.
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

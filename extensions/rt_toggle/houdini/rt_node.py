@@ -185,7 +185,7 @@ def build(parent=None, name=NODE_NAME):
                 script_callback_language=hou.scriptLanguage.Python)),
             (RESTORE_PARM, hou.ButtonParmTemplate(
                 RESTORE_PARM, "Restore Previous Renderer",
-                help="Switch Off or retry an incomplete renderer/pause restoration.",
+                help="Switch Off or retry an incomplete renderer, pause or reference-grid restoration.",
                 script_callback=_callback_call("restore_render_callback"),
                 script_callback_language=hou.scriptLanguage.Python)),
             (REFRESH_PARM, hou.ButtonParmTemplate(

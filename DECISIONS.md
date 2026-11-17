@@ -1,5 +1,27 @@
 # DECISIONS — durable lessons, dated
 
+## 2026-11-16 (scripted camera edits and native reference-floor drawing)
+- Measure from the artist's edit to a current image, not only from Hydra Execute.
+  A short request-to-AOV time can conceal a host viewport stall before submission.
+  First return to Qt is also insufficient: a later draw can still block the image.
+- The reproduced four-second stall belongs to Houdini 22.0.429's native
+  `dm_LabelGeometryVK::build` / infinite reference-floor drawing. Removing fences
+  or hiding grid numbers did not fix it; disabling the reference floor did.
+- Keep the workaround in the integrated controller, scoped to this build and
+  its owned viewer. Temporarily hide only reference-plane visibility; restore it
+  on Off or external renderer takeover, including with the panel closed. Respect
+  an artist who manually shows it. Never change camera clipping, projection,
+  render settings or grid spacing to make a timing test appear faster.
+- Display cleanup has its own recovery record. A failed grid restore must remain
+  retryable without inventing renderer ownership after a manual renderer switch.
+  The temporary observer exists only while display ownership needs servicing.
+- ReferencePlane visibility broadcasts to every split viewport's orthographic
+  grid flag after redraw. Immediate readback misses this side effect; a simple
+  False/True roundtrip loses mixed settings. Preserve each actual viewport's
+  flags across the redraw, both when hiding and restoring the reference plane.
+  Hiding orthographic grids alone did not remove the stall; restoring their
+  flags while keeping the reference floor hidden retained the speedup.
+
 ## 2026-11-16 (integrated artist viewer controls)
 - HoudiniRT is one artist workflow. The primary panel, shelf, radial and node
   actions select the Hydra renderer in an explicit Solaris viewer. The optional

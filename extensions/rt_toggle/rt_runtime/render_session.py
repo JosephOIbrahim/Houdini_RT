@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Any
 
+from .reference_grid import ReferenceGridGuard
+
 RENDERER_NAMES = ("HoudiniRT", "HdRTRendererPlugin")
 
 
@@ -29,6 +31,7 @@ class RenderStatus:
     message: str = ""
     error: str = ""
     pending: str = ""
+    cleanup_pending: bool = False
 
     @property
     def busy(self) -> bool:
@@ -45,7 +48,7 @@ class RenderStatus:
 
     @property
     def can_restore(self) -> bool:
-        return self.owned
+        return self.owned or self.cleanup_pending
 
 
 @dataclass
@@ -76,6 +79,9 @@ class RenderController:
         self._errors: list[tuple[Any, str]] = []
         self._clock = clock or time.monotonic
         self._command_timeout = max(0.1, float(command_timeout))
+        self._grid = ReferenceGridGuard(self._hou, self._same_pane, RENDERER_NAMES,
+                                        self._clock, self._set_error, self._grid_departed,
+                                        self._clear_grid_error)
 
     @staticmethod
     def _main_thread():
@@ -122,6 +128,22 @@ class RenderController:
 
     def _error(self, viewer):
         return next((e for p, e in self._errors if self._same_pane(p, viewer)), "")
+
+    def _clear_grid_error(self, viewer, error):
+        if self._error(viewer) == error:
+            self._clear_error(viewer)
+
+    def _grid_departed(self, viewer, renderer, deleted):
+        """The display observer can notice takeover even with no panel open."""
+        record, command = self._record(viewer), self._command(viewer)
+        if not deleted and record and record.restoring and renderer == record.previous_renderer:
+            return  # Keep the pending restoration of the previous pause state.
+        if command:
+            self._drop_command(command)
+        if record:
+            self._forget(record)
+        if record or command or deleted:
+            self._clear_error(viewer)
 
     @staticmethod
     def _renderer_matches(actual, expected):
@@ -216,6 +238,9 @@ class RenderController:
                                 "The displayed state is the observed state; retry the action.")
                 self._drop_command(command)
                 command = None
+        self._grid.observe(viewer, renderer)
+        record = self._record(viewer)
+        command = self._command(viewer)
         if renderer in RENDERER_NAMES:
             state = "paused" if paused else "active"
             message = "HoudiniRT is paused." if paused else "HoudiniRT is selected; rendering is not paused."
@@ -230,10 +255,18 @@ class RenderController:
                         "restore": " Restoring the previous renderer's pause state."}[command.operation]
         elif record and record.restoring:
             message += " Previous renderer restoration is pending; switch Off again to retry."
+        cleanup = self._grid.cleanup_pending(viewer)
+        display_pending = self._grid.pending(viewer)
+        if display_pending:
+            message += " Waiting for redraw to preserve the split viewport grid settings."
+        elif cleanup:
+            message += " Reference grid restoration is pending; switch Off again to retry."
+        if self._grid.hidden(viewer):
+            message += " Reference grid temporarily hidden for responsive camera edits; restored on Off."
         return RenderStatus(state, name, renderer,
                             record.previous_renderer if record else "",
                             record is not None, message, self._error(viewer),
-                            command.operation if command else "")
+                            command.operation if command else display_pending, cleanup)
 
     def status(self, viewer=None) -> RenderStatus:
         """Read native state; never infer ON from service health or a checkbox."""
@@ -244,6 +277,7 @@ class RenderController:
             error = str(exc) or type(exc).__name__
             record = command = None
             if viewer is not None and threading.current_thread() is threading.main_thread():
+                self._grid.observe(viewer)
                 record, command = self._record(viewer), self._command(viewer)
                 # Keep recovery after a transient failed read. A command whose
                 # state cannot be observed is still bounded by its deadline.
@@ -253,7 +287,8 @@ class RenderController:
                 self._set_error(viewer, error)
             return RenderStatus("error", previous_renderer=record.previous_renderer if record else "",
                                 owned=record is not None, message=error, error=error,
-                                pending=command.operation if command else "")
+                                pending=command.operation if command else self._grid.pending(viewer),
+                                cleanup_pending=self._grid.cleanup_pending(viewer))
 
     def _failure(self, viewer, exc):
         text = str(exc) or type(exc).__name__
@@ -280,7 +315,7 @@ class RenderController:
             observed = replace(observed, error="")
             if observed.active:
                 return observed  # preserve pause and ownership on repeat clicks
-            if observed.owned:
+            if observed.can_restore:
                 raise RenderSessionError("Complete the pending Off restoration before enabling HoudiniRT again.")
             if not observed.renderer:
                 raise RenderSessionError("The viewer has no restorable previous renderer.")
@@ -291,6 +326,7 @@ class RenderController:
             viewer.setHydraRenderer(renderer)
             if viewer.currentHydraRenderer() not in RENDERER_NAMES:
                 raise RenderSessionError("Houdini did not select the requested HoudiniRT renderer.")
+            self._grid.acquire(viewer)
             return self._request_pause(viewer, False, "enable")
         except Exception as exc:
             return self._failure(viewer, exc)
@@ -298,13 +334,18 @@ class RenderController:
     def deactivate(self, viewer=None) -> RenderStatus:
         try:
             viewer = self.resolve_viewer(viewer)
+            retrying_display = self._grid.needs_retry(viewer)
+            self._grid.retry(viewer)
             observed = self._observe(viewer)
-            if observed.busy:
+            if observed.busy and not (retrying_display and self._command(viewer) is None):
                 return observed
             self._clear_error(viewer)
             observed = replace(observed, error="")
             record = self._record(viewer)
             if record is None:
+                if observed.cleanup_pending:
+                    self._grid.observe(viewer)
+                    return self._observe(viewer)
                 if observed.active:
                     raise RenderSessionError(
                         "HoudiniRT was enabled outside these controls; no previous renderer was recorded. "
@@ -327,10 +368,13 @@ class RenderController:
     def toggle(self, viewer=None) -> RenderStatus:
         try:
             viewer = self.resolve_viewer(viewer)
+            # Polling can finish cleanup. Preserve the button's restoration
+            # intent instead of immediately enabling a fresh session afterward.
+            restoring = self._record(viewer) is not None or self._grid.cleanup_pending(viewer)
             current = self._observe(viewer)
             if current.busy:
                 return current
-            if current.active or current.owned:
+            if current.active or current.can_restore or restoring:
                 return self.deactivate(viewer)
             return self.activate(viewer)
         except Exception as exc:
@@ -361,7 +405,8 @@ class RenderController:
             return self._failure(viewer, exc)
 
 
-_CONTROLLER = None
+# An explicit module reload must not orphan the live display observer/leases.
+_CONTROLLER = globals().get("_CONTROLLER")
 _CONTROLLER_LOCK = threading.Lock()
 
 

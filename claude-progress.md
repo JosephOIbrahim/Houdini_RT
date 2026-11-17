@@ -1,5 +1,26 @@
 # Progress
 
+## 2026-11-16 — scripted camera-edit delay repair
+
+- Diagnosed the reproduced four-second delay in Houdini 22.0.429's native
+  infinite reference-floor label builder, independently of renderer GPU work.
+- Integrated controls v0.2.1 temporarily hide the owned viewer's reference floor.
+  Preserve individual split-grid flags across Houdini's deferred broadcast on
+  hide and restore; keep camera, render settings and other viewers untouched.
+  Off and panel-closed external takeover restore the floor; manual Show remains
+  the artist's choice. Partial cleanup stays retryable without blocking renderer Off.
+- Installed `camera-edits-h22.0.429-1c4d6bfea15c` in the normal preferences:
+  94 payload files verified, 15 surrounding registrations unchanged, rollback kept.
+  431 runtime tests pass (one Windows-inapplicable skip); focused 140 pass.
+- Regular GUI and independent pixel/log audit PASS: 20 camera edits at
+  71.68 / 87.51 ms p50 / p95 versus 4,652 / 4,253 ms floor-shown controls.
+  Matched-pose RGBA exact; expected camera pixel shift; active pause ACK 4.251 ms,
+  eight-second no-work hold and same-generation Resume. Mixed grid flags,
+  second-viewer isolation, manual override and original paused Karma restoration pass.
+- Native renderer/shaders unchanged; 30 source files and eight sealed inputs
+  rehashed against the prior passing gate. Scope, host restoration cost and
+  evidence: `docs/camera-edit-repair-2026-11-16.md`.
+
 ## 2026-11-16 — GPU accumulation, batching and resolve (Phase 2B)
 
 - The existing target viewer, Enable, Pause/Resume and Off restoration remain

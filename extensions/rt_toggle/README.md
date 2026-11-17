@@ -1,4 +1,4 @@
-# HoudiniRT controls — v0.2.0
+# HoudiniRT controls — v0.2.1
 
 One artist workflow for the HoudiniRT Hydra renderer in Houdini 22 / Solaris.
 The main toggle enables the renderer in the **chosen Scene Viewer**. It does
@@ -24,6 +24,15 @@ and prevents duplicate commands until readback confirms the change. A
 The same controller serves the shelf, radial menu and optional node. State
 survives panel recreation for the current Houdini process. Closing a panel
 does not switch renderers or stop another viewer's work.
+
+On Houdini 22.0.429, enabling HoudiniRT temporarily hides the chosen viewer's
+reference grid to avoid a native viewport stall during camera edits. Off restores
+its original visibility; a manual renderer switch also restores it, even with
+the panel closed. Individual split-view grid visibility is preserved across
+Houdini's deferred redraw. Camera settings, grid spacing and other viewers are unchanged.
+You can turn the reference grid back on while rendering; that choice is respected,
+though the host delay can return. This is a scoped workaround for Houdini's
+reference-floor drawing, not a change to render quality or camera clipping.
 
 ## Targeting and ownership
 

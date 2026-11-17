@@ -9,6 +9,11 @@ HoudiniRT is a progressive GPU path tracer for Solaris, implemented as a Hydra
 render delegate with Vulkan inline ray queries and Adobe OpenPBR. Native Houdini
 nodes author the scene; the integrated HoudiniRT panel controls the chosen viewer.
 
+**[Download the v0.5.0 preview](https://github.com/JosephOIbrahim/Houdini_RT/releases/tag/v0.5.0)**
+for Windows x64 / Houdini 22.0.429. The binary bundle includes renderer and artist
+controls together. Follow the [integrated installation guide](packaging/README.md)
+and [release notes](docs/releases/v0.5.0.md); source archives require compilation.
+
 ## Current delivery: UVs, textures and HDRI lighting
 
 The Phase 4B delivery adds native MaterialX Image and UV inputs, PNG/JPEG/EXR/HDR

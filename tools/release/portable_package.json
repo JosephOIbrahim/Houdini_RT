@@ -1,0 +1,13 @@
+{
+  "enable": "houdini_os == 'windows' and houdini_version == '22.0.429'",
+  "show": true,
+  "load_package_once": true,
+  "env": [
+    {"HOUDINIRT_HOME": "$HOUDINI_PACKAGE_PATH/HoudiniRT-0.5.0"},
+    {"RT_TOGGLE_ROOT": "$HOUDINIRT_HOME/extension"},
+    {"var": "PYTHONPATH", "value": "$RT_TOGGLE_ROOT", "method": "append"},
+    {"var": "PXR_PLUGINPATH_NAME", "value": "$HOUDINIRT_HOME/renderer", "method": "append"},
+    {"var": "HOUDINI_TOOLBAR_PATH", "value": "$HOUDINIRT_HOME/houdini/toolbar", "method": "prepend"}
+  ],
+  "hpath": "$HOUDINIRT_HOME/houdini"
+}

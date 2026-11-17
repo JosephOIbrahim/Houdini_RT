@@ -1,5 +1,30 @@
 # Progress
 
+## 2026-11-17 — integrated public preview release packaging
+
+- Prepared the first integrated public 0.5.0 Windows x64/Houdini 22.0.429 bundle.
+  The native renderer and Python controls remain byte-identical to the accepted
+  `87bff34` milestone. Public packaging adds relative package discovery, current
+  install/rollback instructions, complete Apache/TOST/MIT/OpenPBR license texts,
+  a relative hash manifest and SHA256SUMS. Local install/rollback records stay local.
+- `tools/release/build_public_release.py` verifies the pinned installation,
+  199 tested source files, passed receipt hashes and exact committed release
+  inputs. Provisional builds are explicitly marked; final builds require a clean
+  worktree and the release commit at HEAD. No installer or publisher runs implicitly.
+- Six archive-contract checks pass. Two provisional builds are byte-identical;
+  independent archive review verifies 51 members and all 41 runtime files against
+  the installed payload. Existing extension build/audit and CI static gates pass.
+  The unpublished history scan found no high-signal credentials in 725 text blobs.
+- Independent relocated-path H22 package discovery loads the extracted DLL,
+  controller, profile and overlays without manual plugin/Python search paths.
+  A self-contained relative-texture/HDRI render passes (albedo max error 2.38e-8,
+  diffuse mean relative error 0.01045%, 512 samples, validation silent). Existing
+  regular registrations are preserved and all owned children exited.
+- A new read-only GitHub Actions job checks archive safety/reproducibility.
+  It supplements Python-control CI; it does not claim native Houdini coverage.
+  Portable audit: `build/m7/release-audit/provisional-02-unsandboxed/receipt.json`.
+  Public guide/notes: `packaging/README.md`, `docs/releases/v0.5.0.md`.
+
 ## 2026-11-17 — native UVs, textures and HDRI lighting (Phase 4B)
 
 - One artist workflow continues through native Material Library/OpenPBR/Assign

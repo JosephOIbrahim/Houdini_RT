@@ -1,0 +1,30 @@
+name: public-release-tests
+
+on:
+  push:
+    paths:
+      - 'tools/release/**'
+      - 'packaging/**'
+      - 'docs/releases/**'
+      - '.github/workflows/public-release-tests.yml'
+  pull_request:
+    paths:
+      - 'tools/release/**'
+      - 'packaging/**'
+      - 'docs/releases/**'
+      - '.github/workflows/public-release-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  archive-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Check archive safety and reproducibility
+        run: python -B -m unittest discover -s tools/release -p test_public_release.py -v

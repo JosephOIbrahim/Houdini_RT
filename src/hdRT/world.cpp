@@ -41,6 +41,7 @@ std::shared_ptr<const HdRTWorldScene> HdRTBuildScene(HdRTSceneSnapshot const& sn
     auto world = std::make_shared<HdRTWorldScene>();
     world->meshes = snapshot.meshes;
     world->contentVersion = snapshot.contentVersion;
+    for (const auto& entry : snapshot.lights) world->lights.push_back(entry.second);
     for (const auto& entry : snapshot.domes) {
         if (entry.second.visible)
             for (int k = 0; k < 3; ++k)

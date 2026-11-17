@@ -17,6 +17,12 @@ class Field:
     def setEnabled(self, value):
         self.enabled = value
 
+    def setPlainText(self, value):
+        self.text = value
+
+    def setVisible(self, value):
+        self.visible = value
+
 
 def panel(controller, viewer):
     # Execute the actual presenter/action methods, without importing a Qt ABI.
@@ -170,3 +176,62 @@ def test_owned_renderer_with_grid_cleanup_keeps_full_restoration_action():
     assert ui._render_toggle.text == "Turn off — restore previous renderer"
     assert ui._render_toggle.enabled
     assert "Previous renderer: Karma CPU." in ui._render_message.text
+
+
+def support_fields(ui):
+    ui._support_scan = None
+    ui._support_rendered_text = None
+    for name in ("_support_check", "_support_status", "_support_text"):
+        setattr(ui, name, Field())
+    ui._support_timer = SimpleNamespace(active=False)
+    ui._support_timer.start = lambda: setattr(ui._support_timer, "active", True)
+    ui._support_timer.stop = lambda: setattr(ui._support_timer, "active", False)
+
+
+def test_scene_check_is_on_demand_targeted_incremental_and_cancellable(monkeypatch):
+    from rt_runtime import scene_support
+    from test_scene_support import make, Prim
+    scan, viewer, host, stage = make([Prim("/p%d" % i) for i in range(300)])
+    calls = []
+    monkeypatch.setattr(scene_support, "SceneSupportScan", lambda target: calls.append(target) or scan)
+    ui = panel(None, viewer)
+    support_fields(ui)
+    ui._refresh_scene_support()
+    assert not calls
+    ui._check_scene_support()
+    assert calls == [viewer] and ui._support_timer.active and stage.reads == 0
+    ui._advance_scene_support()
+    assert 0 < stage.reads <= 64
+    assert ui._support_check.text == "Cancel scene check"
+    ui._check_scene_support()
+    assert scan.report.state == "partial" and not ui._support_timer.active
+    assert "Partial" in ui._support_status.text
+    assert "not a native translated-scene census" in ui._support_text.text
+
+
+def test_scene_report_becomes_stale_when_panel_target_changes_without_rescanning(monkeypatch):
+    from rt_runtime import scene_support
+    from test_scene_support import make, Prim
+    scan, viewer, host, stage = make([Prim("/sphere", "Sphere")])
+    monkeypatch.setattr(scene_support, "SceneSupportScan", lambda target: scan)
+    ui = panel(None, viewer)
+    support_fields(ui)
+    ui._check_scene_support()
+    ui._advance_scene_support()
+    assert scan.report.state == "complete"
+    ui._viewer = object()
+    ui._refresh_scene_support()
+    assert scan.report.state == "stale" and "Outdated" in ui._support_status.text
+    assert "intended" in ui._support_text.text and stage.reads == 1
+    assert not ui._support_timer.active
+
+
+def test_scene_report_missing_host_dependencies_is_explicit(monkeypatch):
+    from rt_runtime import scene_support
+    def unavailable(viewer): raise ImportError("USD unavailable")
+    monkeypatch.setattr(scene_support, "SceneSupportScan", unavailable)
+    ui = panel(None, object())
+    support_fields(ui)
+    ui._check_scene_support()
+    assert "unavailable: USD unavailable" in ui._support_status.text
+    assert ui._support_scan is None and not ui._support_text.visible

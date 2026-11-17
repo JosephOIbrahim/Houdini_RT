@@ -45,6 +45,7 @@ HdRTMesh::GetInitialDirtyBitsMask() const
         | HdChangeTracker::DirtyVisibility
         | HdChangeTracker::DirtyPrimvar
         | HdChangeTracker::DirtyNormals
+        | HdChangeTracker::DirtyPrimID
         | HdChangeTracker::DirtyInstancer
         ;
     return (HdDirtyBits)mask;
@@ -102,6 +103,8 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
     bool geometryDirty = first;
     bool topologyDirty = first;
     bool transformDirty = first;
+    bool normalSourceChanged = first;
+    bool normalsDirty = first;
     bool changed = first;
 
     // Instanced rprims (point instancers, native instancing) are not expanded yet: say so once.
@@ -158,10 +161,17 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
                    id.GetText(), value.GetTypeName().c_str(), _albedo[0], _albedo[1], _albedo[2]);
     }
 
-    if (!changed) {
-        *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
-        return;
+    if (first || (*dirtyBits & HdChangeTracker::DirtyNormals)
+        || HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->normals)
+        || HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, TfToken("primvars:normals"))) {
+        const HdRTNormalSource source = HdRTReadNormals(sceneDelegate, id);
+        if (!(source == _normalSource)) {
+            _normalSource = source;
+            normalSourceChanged = true;
+        }
     }
+    const int primId = GetPrimId();
+    changed = changed || first || _published->primId != primId;
 
     // Validate before triangulation or smooth normals. A points-only edit may
     // invalidate the old topology; a later edit can make that same mesh valid.
@@ -191,6 +201,9 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
                 VtIntArray primitiveParams;
                 _triangles = VtVec3iArray();
                 meshUtil.ComputeTriangleIndices(&_triangles, &primitiveParams);
+                _faceIds.resize(primitiveParams.size());
+                for (size_t i = 0; i < primitiveParams.size(); ++i)
+                    _faceIds[i] = HdMeshUtil::DecodeFaceIndexFromCoarseFaceParam(primitiveParams[i]);
             }
             if (!_adjacencyValid) {
                 _adjacency.BuildAdjacencyTable(&_topology);
@@ -203,6 +216,26 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
         }
     }
 
+    if (geometryDirty || normalSourceChanged) {
+        VtVec3fArray corners;
+        std::string error;
+        if (_geometryValid)
+            HdRTBuildCornerNormals(_normalSource, _topology, _triangles, _faceIds,
+                                   _points.size(), id, &corners, &error);
+        if (!error.empty() && error != _normalWarning)
+            HdRTLog("WARNING: mesh %s authored normals: %s; generated smooth normals are used",
+                    id.GetText(), error.c_str());
+        _normalWarning = std::move(error);
+        _cornerNormals = std::move(corners);
+        const VtVec3fArray smooth = _geometryValid ? _normals : VtVec3fArray();
+        normalsDirty = first || smooth != _published->normals || _cornerNormals != _published->cornerNormals;
+        changed = changed || normalsDirty;
+    }
+    if (!changed) {
+        *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
+        return;
+    }
+
     // Vt arrays are shared copy-on-write. Transform/visibility/colour edits
     // publish only a small record; unchanged geometry remains shared.
     auto data = _published ? std::make_shared<HdRTMeshData>(*_published)
@@ -211,10 +244,17 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
         data->points = _geometryValid ? _points : VtVec3fArray();
         data->normals = _geometryValid ? _normals : VtVec3fArray();
         data->triangles = _geometryValid ? _triangles : VtVec3iArray();
+        data->faceIds = _geometryValid ? _faceIds : VtIntArray();
         data->geometryVersion = HdRTNextMeshVersion();
         if (topologyDirty)
             data->topologyVersion = HdRTNextMeshVersion();
     }
+    if (normalsDirty) {
+        data->normals = _geometryValid ? _normals : VtVec3fArray();
+        data->cornerNormals = _cornerNormals;
+        data->normalVersion = HdRTNextMeshVersion();
+    }
+    data->primId = primId;
     data->transform = _transform;
     data->albedo    = _albedo;
     data->visible   = IsVisible() && _geometryValid;

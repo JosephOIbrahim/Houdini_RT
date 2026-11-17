@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.20)
+project(HoudiniRTMeshNormalTests LANGUAGES CXX)
+find_package(Houdini REQUIRED)
+enable_testing()
+set(HRT_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../src/hdRT")
+add_executable(mesh_normals mesh_normals.cpp "${HRT_SOURCE}/meshNormals.cpp"
+    "${HRT_SOURCE}/mesh.cpp" "${HRT_SOURCE}/world.cpp")
+target_include_directories(mesh_normals PRIVATE "${HRT_SOURCE}")
+target_link_libraries(mesh_normals PRIVATE Houdini HoudiniThirdParty)
+target_compile_features(mesh_normals PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_definitions(mesh_normals PRIVATE
+        _SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
+endif()
+add_test(NAME mesh_normals COMMAND $<TARGET_FILE:mesh_normals>)
+
+add_executable(aov_outputs aov_outputs.cpp "${HRT_SOURCE}/renderBuffer.cpp")
+target_include_directories(aov_outputs PRIVATE "${HRT_SOURCE}")
+target_link_libraries(aov_outputs PRIVATE Houdini HoudiniThirdParty)
+target_compile_features(aov_outputs PRIVATE cxx_std_20)
+if(MSVC)
+    target_compile_definitions(aov_outputs PRIVATE
+        _SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING)
+endif()
+add_test(NAME aov_outputs COMMAND $<TARGET_FILE:aov_outputs>)

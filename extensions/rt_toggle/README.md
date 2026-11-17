@@ -1,4 +1,4 @@
-# HoudiniRT controls — v0.2.1
+# HoudiniRT controls — v0.3.0
 
 One artist workflow for the HoudiniRT Hydra renderer in Houdini 22 / Solaris.
 The main toggle enables the renderer in the **chosen Scene Viewer**. It does
@@ -33,6 +33,34 @@ Houdini's deferred redraw. Camera settings, grid spacing and other viewers are u
 You can turn the reference grid back on while rendering; that choice is respected,
 though the host delay can return. This is a scoped workaround for Houdini's
 reference-floor drawing, not a change to render quality or camera clipping.
+
+## Check scene support
+
+Choose the intended viewer, then click **Check scene support**. The panel compares
+that viewer's displayed USD stage with the matching installed HoudiniRT capability
+profile. Findings name exact primitive paths and explain ignored or unverified
+features, including materials, light textures/shaping/linking, instancing,
+subdivision and authored RenderVar requests. Edit supported lights through
+Houdini's **Light LOP** or **Light Mixer**; the panel does not create parallel controls.
+
+Rectangle, disk and sphere lights are visible opaque emitters in HoudiniRT.
+Karma's `renderlightgeo` and `lightgeocastsshadow` switches are not evaluated,
+so light visibility and occlusion can differ from Karma. The report identifies
+this limitation at each affected light path.
+
+This is a stage inspection, not a count of geometry translated by Hydra or proof
+that an output rendered correctly. It records the viewer, frame and stage-lock
+state. Native renderer selection and pause state remain separate.
+
+Scanning runs in short main-thread steps and can be cancelled. A large scan stops
+after 20,000 prims and displays **Partial**; at most 200 findings are shown, with an
+explicit omitted count. Stage, frame or viewer changes mark the result **Outdated**.
+Click again to inspect the current scene. Closing/hiding the panel ends the scan.
+No USD opinions, light parameters, renderer selection or saved preferences change.
+
+A missing or incompatible installed profile is reported as unavailable. A registered
+older renderer cannot borrow a newer installation's capability claims. Analytic USD
+shapes are marked **Not assessed**, since imaging adapters may convert them to meshes.
 
 ## Targeting and ownership
 

@@ -9,6 +9,7 @@
 //
 #include "renderer.h"
 
+#include "aov.h"
 #include "log.h"
 #include "renderBuffer.h"
 
@@ -240,6 +241,15 @@ HdRTRenderer::_ValidateAovBindings()
     _width = 0;
     _height = 0;
 
+    auto invalid = [&](const std::string& message) {
+        TF_WARN("HoudiniRT: %s", message.c_str());
+        if (_aovBindingsValid) {
+            std::lock_guard<std::mutex> lock(_statsMutex);
+            _stats.error = message;
+        }
+        _aovBindingsValid = false;
+    };
+
     for (size_t i = 0; i < _aovBindings.size(); ++i) {
         // By the time the attachment gets here, there should be a bound output buffer.
         HdRenderBuffer* rb = _aovBindings[i].renderBuffer;
@@ -253,6 +263,16 @@ HdRTRenderer::_ValidateAovBindings()
             TF_WARN("HoudiniRT: Aov '%s' is bound to a render buffer that was never allocated",
                     _aovNames[i].name.GetText());
             _aovBindingsValid = false;
+            continue;
+        }
+        const TfToken& name = _aovBindings[i].aovName;
+        if (HdRTAovFormat(name) == HdFormatInvalid) {
+            invalid(TfStringPrintf("unsupported requested AOV '%s'; no image will be published", name.GetText()));
+            continue;
+        }
+        if (!HdRTAovSupportsFormat(name, rb->GetFormat())) {
+            invalid(TfStringPrintf("AOV '%s' has unsupported format %d; no image will be published",
+                                   name.GetText(), int(rb->GetFormat())));
             continue;
         }
         if (_width == 0 && _height == 0) {
@@ -334,9 +354,8 @@ HdRTRenderer::_Fail(const std::string& what)
     _MarkAovBuffersConverged();
 }
 
-// Writes the running average into the bound colour buffer(s). The GPU image covers the data window, row 0
-// at the bottom; (x0, y0) is where that window starts inside the render buffer, whose row 0 is also the
-// bottom. Other AOVs retain their clear values until their shading outputs are implemented.
+// Publish resolved beauty plus deterministic surface guides from the same generation. The GPU image
+// covers the data window, row 0 at the bottom; (x0,y0) locates it in the full render buffer.
 bool
 HdRTRenderer::_WriteAovs(HdRenderThread* renderThread, int completedSamples, unsigned int x0, unsigned int y0,
                         unsigned int w, unsigned int h, std::string* error)
@@ -351,6 +370,7 @@ HdRTRenderer::_WriteAovs(HdRenderThread* renderThread, int completedSamples, uns
     if (_Superseded() || renderThread->IsStopRequested())
         return true;
     const float* pixelsResolved = _gpu.ResolvedPixels();
+    const HdRTVkGuide* guides = _gpu.ResolvedGuides();
     if (!pixelsResolved) {
         *error = "GPU resolve returned no image";
         return false;
@@ -363,7 +383,16 @@ HdRTRenderer::_WriteAovs(HdRenderThread* renderThread, int completedSamples, uns
             *error = "could not stage the current render buffer";
             return false;
         }
-        if (_aovNames[i].name != HdAovTokens->color) {
+        if (_aovBindings[i].aovName != HdAovTokens->color) {
+            if (!guides) {
+                *error = "GPU resolve returned no requested surface guides";
+                return false;
+            }
+            HdRTRenderBuffer* buffer = staged.back().get();
+            for (unsigned int y = 0; y < h; ++y)
+                for (unsigned int x = 0; x < w; ++x)
+                    HdRTWriteGuide(buffer, GfVec3i(int(x0+x), int(y0+y), 1),
+                                   _aovBindings[i].aovName, guides[size_t(y)*w+x]);
             continue;
         }
         HdRTRenderBuffer *rb = staged.back().get();
@@ -483,8 +512,14 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
     }
 
     if (!_ValidateAovBindings()) {
-        // Nothing can be rendered. Mark the AOVs converged so that the application stops waiting.
-        _Fail("could not validate the AOV bindings; nothing will be rendered");
+        std::string reason;
+        {
+            std::lock_guard<std::mutex> lock(_statsMutex);
+            reason = _stats.error;
+        }
+        // Terminate this request with a visible failure, without publishing a
+        // clear-only image or claiming a current presented generation.
+        _Fail(reason.empty() ? "could not validate the AOV bindings; no image was published" : reason);
         return;
     }
     if (_aovBindings.empty() || _width == 0 || _height == 0) {
@@ -561,12 +596,18 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
             mesh.id = entry.first.GetString();
             mesh.geometryVersion = data.geometryVersion;
             mesh.topologyVersion = data.topologyVersion;
+            mesh.normalVersion = data.normalVersion;
+            mesh.cornerNormals = !data.cornerNormals.empty();
             mesh.vertexCount = data.points.size();
             mesh.triangleCount = data.triangles.size();
             static_assert(sizeof(GfVec3f) == 3 * sizeof(float), "packed GPU xyz input");
             static_assert(sizeof(GfVec3i) == 3 * sizeof(uint32_t), "packed GPU triangle input");
             mesh.positions = reinterpret_cast<const float*>(data.points.cdata());
-            mesh.normals = reinterpret_cast<const float*>(data.normals.cdata());
+            const VtVec3fArray& normals = mesh.cornerNormals ? data.cornerNormals : data.normals;
+            mesh.normals = reinterpret_cast<const float*>(normals.cdata());
+            mesh.normalCount = normals.size();
+            mesh.faceIds = data.faceIds.cdata();
+            mesh.primId = data.primId;
             mesh.indices = reinterpret_cast<const uint32_t*>(data.triangles.cdata());
             for (int r = 0; r < 3; ++r) {
                 for (int c = 0; c < 4; ++c) {
@@ -580,6 +621,11 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
         HdRTVkEditStats edits;
         if (!_gpu.SetMeshes(meshes, &edits, &error)) {
             _uploadedScene.reset(); // SetMeshes failure invalidates the GPU's scene caches.
+            _Fail(error);
+            return;
+        }
+        if (!_gpu.SetLights(w.lights, &error)) {
+            _uploadedScene.reset();
             _Fail(error);
             return;
         }
@@ -620,6 +666,8 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
     }
     frame.bounces = uint32_t(_config.bounces);
     frame.seed = uint32_t(_config.seed);
+    frame.guides = std::any_of(_aovBindings.begin(), _aovBindings.end(),
+        [](const HdRenderPassAovBinding& binding) { return binding.aovName != HdAovTokens->color; });
 
     bool failed = false;
     int completed = 0;

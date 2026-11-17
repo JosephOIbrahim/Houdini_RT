@@ -1,0 +1,8 @@
+{
+  "created_utc": "2026-11-17T13:01:17.862998+00:00",
+  "purpose": "Pre-capture independent GUI acceptance; fixed bounds and strengthened selected-event/raw-log binding",
+  "files": {
+    "judge_gui_lighting.py": "80b16de71c5eb95bbf264d4ac1100175ae4798e3d815ad003c736c1ae793dfee",
+    "judge_contract.json": "cf08e3f6ce1fd62a225535c7e8f1f829f074ba7fd9f86b987040a1f00c3ee535"
+  }
+}

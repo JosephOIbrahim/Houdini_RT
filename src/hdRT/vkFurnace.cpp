@@ -102,16 +102,19 @@ struct Accel
 // Four uint64 addresses/padding, then one vec4: exactly the shader's std430 table row.
 struct MeshRow
 {
-    uint64_t positions = 0, normals = 0, indices = 0, padding = 0;
+    uint64_t positions = 0, normals = 0, indices = 0, faceIds = 0;
     float albedo[4] = {};
+    int32_t metadata[4] = {-1, 0, 0, 0};
 };
-static_assert(sizeof(MeshRow) == 48, "MeshRow must match the shader");
+static_assert(sizeof(MeshRow) == 64, "MeshRow must match the shader");
 
 struct MeshGpu
 {
-    Buffer positions, normals, indices;
+    Buffer positions, normals, indices, faceIds;
     Accel blas;
     uint64_t geometryVersion = 0, topologyVersion = 0;
+    uint64_t normalVersion = 0;
+    size_t normalCount = 0;
     size_t vertexCount = 0, triangleCount = 0;
     uint32_t slot = 0;
     float transform[12] = {};
@@ -178,6 +181,10 @@ struct HdRTVkFurnace::Impl
     std::vector<MeshGpu*> slots;
     std::vector<MeshRow> rows;
     Buffer meshTable, instanceBuffer, stagingBuffer, scratchBuffer;
+    Buffer lightTable, guideBuffer, guideReadback;
+    std::vector<HdRTVkLight> lights;
+    bool lightsReady = false;
+    bool wantGuides = false, guidesValid = false;
     Accel tlas;
     uint64_t legacyVersion = 0;
     bool hasScene = false;
@@ -734,10 +741,12 @@ void HdRTVkFurnace::Impl::DestroyMesh(MeshGpu& mesh)
     DestroyBuffer(mesh.positions);
     DestroyBuffer(mesh.normals);
     DestroyBuffer(mesh.indices);
+    DestroyBuffer(mesh.faceIds);
 }
 
 void HdRTVkFurnace::Impl::DestroyScene()
 {
+    lightsReady = false;
     hasScene = false;
     if (device && queue)
         vkQueueWaitIdle(queue);
@@ -775,13 +784,9 @@ bool HdRTVkFurnace::Impl::UpdateMesh(MeshGpu& mesh, const HdRTVkMesh& view,
             const VkBufferUsageFlags storage = input | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
             const VkDeviceSize vbBytes = VkDeviceSize(view.vertexCount) * 3 * sizeof(float);
             const VkDeviceSize ibBytes = VkDeviceSize(view.triangleCount) * 3 * sizeof(uint32_t);
-            if (!EnsureBuffer(vbBytes, storage, false, &mesh.positions, error)
-                || !EnsureBuffer(vbBytes, storage, false, &mesh.normals, error))
+            if (!EnsureBuffer(vbBytes, storage, false, &mesh.positions, error))
                 return false;
             if (!Upload(mesh.positions, view.positions, vbBytes, 0, error))
-                return false;
-            stats.geometryUploadBytes += vbBytes;
-            if (!Upload(mesh.normals, view.normals, vbBytes, 0, error))
                 return false;
             stats.geometryUploadBytes += vbBytes;
             if (topology || !mesh.indices.buffer)
@@ -808,15 +813,46 @@ bool HdRTVkFurnace::Impl::UpdateMesh(MeshGpu& mesh, const HdRTVkMesh& view,
             ++stats.blasBuilds;
         }
     }
+    const size_t normalCount = view.normalCount ? view.normalCount : view.vertexCount;
+    const uint64_t normalVersion = view.normalVersion ? view.normalVersion : view.geometryVersion;
+    const VkBufferUsageFlags shading = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+        | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (view.vertexCount && view.triangleCount && (geometry || mesh.normalVersion != normalVersion
+        || mesh.normalCount != normalCount)) {
+        const VkDeviceSize bytes = VkDeviceSize(normalCount) * 3 * sizeof(float);
+        if (!EnsureBuffer(bytes, shading, false, &mesh.normals, error)
+            || !Upload(mesh.normals, view.normals, bytes, 0, error)) return false;
+        // Preserve the geometry accounting for legacy probes; shading-only updates are table data.
+        if (geometry) stats.geometryUploadBytes += bytes;
+        else stats.tableUploadBytes += bytes;
+    }
+    if (view.triangleCount && (topology || !mesh.faceIds.buffer)) {
+        std::vector<int32_t> fallback;
+        const int32_t* ids = view.faceIds;
+        if (!ids) {
+            fallback.resize(view.triangleCount);
+            for (size_t i=0; i<fallback.size(); ++i) fallback[i] = int32_t(i);
+            ids = fallback.data();
+        }
+        const VkDeviceSize bytes = VkDeviceSize(view.triangleCount) * sizeof(int32_t);
+        if (!EnsureBuffer(bytes, shading, false, &mesh.faceIds, error)
+            || !Upload(mesh.faceIds, ids, bytes, 0, error)) return false;
+        stats.tableUploadBytes += bytes;
+    }
     MeshRow& row = rows[mesh.slot];
     row.positions = mesh.positions.buffer ? BufferAddress(mesh.positions.buffer) : 0;
     row.normals = mesh.normals.buffer ? BufferAddress(mesh.normals.buffer) : 0;
     row.indices = mesh.indices.buffer ? BufferAddress(mesh.indices.buffer) : 0;
+    row.faceIds = mesh.faceIds.buffer ? BufferAddress(mesh.faceIds.buffer) : 0;
+    row.metadata[0] = view.primId;
+    row.metadata[1] = view.cornerNormals ? 1 : 0;
     std::memcpy(row.albedo, view.albedo, sizeof(row.albedo));
     std::memcpy(mesh.transform, view.transform, sizeof(mesh.transform));
     mesh.visible = view.visible;
     mesh.geometryVersion = view.geometryVersion;
     mesh.topologyVersion = view.topologyVersion;
+    mesh.normalVersion = normalVersion;
+    mesh.normalCount = normalCount;
     mesh.vertexCount = view.vertexCount;
     mesh.triangleCount = view.triangleCount;
     mesh.initialized = true;
@@ -840,18 +876,19 @@ bool HdRTVkFurnace::Impl::BuildTlas(HdRTVkEditStats& stats, std::string* error)
         instances.push_back(item);
         hasScene = hasScene || mesh->visible;
     }
-    if (instances.empty())
+    if (instances.empty() && lights.empty())
     {
         DestroyAccel(tlas);
         return true;
     }
     if (maxInstanceCount && instances.size() > maxInstanceCount)
         return _Fail(error, "too many mesh instances for the selected Vulkan device");
-    const VkDeviceSize bytes = instances.size() * sizeof(instances[0]);
+    const VkDeviceSize bytes = std::max(size_t(1), instances.size()) * sizeof(VkAccelerationStructureInstanceKHR);
+    const VkAccelerationStructureInstanceKHR emptyInstance = {};
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
         | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     if (!EnsureBuffer(bytes, usage, false, &instanceBuffer, error)
-        || !Upload(instanceBuffer, instances.data(), bytes, 0, error))
+        || !Upload(instanceBuffer, instances.empty() ? &emptyInstance : instances.data(), bytes, 0, error))
         return false;
     VkAccelerationStructureGeometryKHR geom = { VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR };
     geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
@@ -887,6 +924,10 @@ bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
             return _Fail(error, "mesh exceeds the Vulkan or shader indexing limits");
         if (view.vertexCount && view.triangleCount && (!view.positions || !view.normals || !view.indices))
             return _Fail(error, "nonempty mesh has a missing geometry array");
+        const size_t normalCount = view.normalCount ? view.normalCount : view.vertexCount;
+        const size_t requiredNormals = view.cornerNormals ? view.triangleCount * 3 : view.vertexCount;
+        if (normalCount < requiredNormals || normalCount > size_t(UINT32_MAX) / 3)
+            return _Fail(error, "normal array does not cover shader indices or exceeds indexing limits");
     }
     HDRT_VK(vkQueueWaitIdle(queue));
     bool tlasDirty = false;
@@ -975,8 +1016,8 @@ bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
 
 bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error)
 {
-    VkDescriptorSetLayoutBinding bindings[4] = {};
-    for (uint32_t k = 0; k < 4; ++k)
+    VkDescriptorSetLayoutBinding bindings[6] = {};
+    for (uint32_t k = 0; k < 6; ++k)
     {
         bindings[k].binding = k;
         bindings[k].descriptorType = (k == 0) ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -984,7 +1025,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
         bindings[k].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dslci = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    dslci.bindingCount = 4;
+    dslci.bindingCount = 6;
     dslci.pBindings = bindings;
     HDRT_VK(vkCreateDescriptorSetLayout(device, &dslci, nullptr, &setLayout));
 
@@ -1009,7 +1050,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     pci.layout = pipelineLayout;
     HDRT_VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline));
 
-    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 } };
+    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 } };
     VkDescriptorPoolCreateInfo dpci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -1090,7 +1131,9 @@ void HdRTVkFurnace::Impl::RefreshFrameAllocations()
 {
     frameStats.accumulationBytes = accumBuffer.allocationSize;
     frameStats.resolveBytes = resolvedBuffer.allocationSize;
-    frameStats.readbackBytesAllocated = readbackBuffer.allocationSize + legacyReadbackBuffer.allocationSize;
+    frameStats.readbackBytesAllocated = readbackBuffer.allocationSize + legacyReadbackBuffer.allocationSize
+        + guideReadback.allocationSize;
+    frameStats.guideBytes = guideBuffer.allocationSize;
     frameStats.accumulationDeviceLocal = (accumBuffer.memoryProperties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
     frameStats.resolveDeviceLocal = (resolvedBuffer.memoryProperties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
 }
@@ -1129,6 +1172,10 @@ void HdRTVkFurnace::Impl::Destroy()
         DestroyBuffer(resolvedBuffer);
         DestroyBuffer(readbackBuffer);
         DestroyBuffer(legacyReadbackBuffer);
+        DestroyBuffer(lightTable);
+        DestroyBuffer(guideBuffer);
+        DestroyBuffer(guideReadback);
+        lights.clear();
         DestroyScene();
         if (fence)
             vkDestroyFence(device, fence, nullptr);
@@ -1287,9 +1334,81 @@ bool HdRTVkFurnace::SetMeshes(const std::vector<HdRTVkMesh>& meshes, HdRTVkEditS
     return ok;
 }
 
+bool HdRTVkFurnace::SetLights(const std::vector<HdRTVkLight>& input, std::string* error)
+{
+    Impl& d = *_impl;
+    if (!d.ready) return _Fail(error, "SetLights called before Init");
+    if (input.size() > d.maxStorageBufferRange / sizeof(HdRTVkLight))
+        return _Fail(error, "light table exceeds Vulkan storage limit");
+    std::vector<HdRTVkLight> lights;
+    std::vector<double> weights;
+    double total = 0;
+    for (const HdRTVkLight& item : input) {
+        const float* values = reinterpret_cast<const float*>(&item);
+        for (size_t i=0; i<sizeof(item)/sizeof(float); ++i)
+            if (!std::isfinite(values[i])) return _Fail(error, "nonfinite light data");
+        const int type = int(item.positionType[3]);
+        if (type < 0 || type > 3 || item.positionType[3] != float(type)
+            || (type != 3 && item.basisUArea[3] <= 0)
+            || (type == 2 && item.normalRadius[3] <= 0)
+            || item.basisVCos[3] < -1 || item.basisVCos[3] > 1)
+            return _Fail(error, "invalid analytic light shape");
+        for (int k=0; k<3; ++k)
+            if (item.radiance[k] < 0) return _Fail(error, "negative light energy");
+        const double energy = 0.2126*item.radiance[0] + 0.7152*item.radiance[1] + 0.0722*item.radiance[2];
+        const double solidAngle = item.basisUArea[3] > 0 ? item.basisUArea[3]
+            : 6.283185307179586 * (1-double(item.basisVCos[3]));
+        const double size = type == 3 ? (solidAngle > 0 ? solidAngle : 1) : item.basisUArea[3];
+        const double weight = energy * size;
+        weights.push_back(weight); total += weight; lights.push_back(item);
+        // Legacy standalone callers specify only diffuse radiance.
+        if (item.selection[1] == 0 && item.selection[2] == 0 && item.selection[3] == 0)
+            for (int k=0; k<3; ++k) lights.back().selection[k+1] = item.radiance[k];
+    }
+    double cumulative = 0;
+    for (size_t i=0; i<lights.size(); ++i) {
+        const double probability = total > 0 ? weights[i]/total : 0;
+        lights[i].radiance[3] = float(probability);
+        cumulative += probability;
+        lights[i].selection[0] = total > 0 && i+1 == lights.size() ? 1.0f : float(cumulative);
+    }
+    if (d.lightsReady && d.lightTable.buffer && d.meshTable.buffer && (lights.empty() || d.tlas.handle)
+        && lights.size() == d.lights.size() &&
+        (lights.empty() || std::memcmp(lights.data(), d.lights.data(), lights.size()*sizeof(lights[0])) == 0))
+        return true;
+    d.lightsReady = false;
+    const HdRTVkLight dummy;
+    const VkDeviceSize bytes = std::max(size_t(1), lights.size()) * sizeof(HdRTVkLight);
+    if (!d.EnsureBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                        false, &d.lightTable, error)
+        || !d.Upload(d.lightTable, lights.empty() ? &dummy : lights.data(), bytes, 0, error)) return false;
+    VkDescriptorBufferInfo info = { d.lightTable.buffer, 0, bytes };
+    VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = d.descriptorSet; write.dstBinding = 4;
+    write.descriptorCount = 1; write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &info;
+    vkUpdateDescriptorSets(d.device, 1, &write, 0, nullptr);
+    d.lights = std::move(lights);
+    if (!d.lights.empty() && !d.tlas.handle) {
+        HdRTVkEditStats edits;
+        if (!d.BuildTlas(edits, error)) return false;
+    }
+    if (!d.meshTable.buffer) {
+        const MeshRow empty;
+        if (!d.EnsureBuffer(sizeof(empty), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                            false, &d.meshTable, error)
+            || !d.Upload(d.meshTable, &empty, sizeof(empty), 0, error)) return false;
+        VkDescriptorBufferInfo meshInfo = {d.meshTable.buffer, 0, sizeof(empty)};
+        write.dstBinding = 3; write.pBufferInfo = &meshInfo;
+        vkUpdateDescriptorSets(d.device, 1, &write, 0, nullptr);
+    }
+    d.lightsReady = true;
+    return true;
+}
+
 bool HdRTVkFurnace::HasScene() const
 {
-    return _impl->hasScene;
+    return _impl->hasScene || !_impl->lights.empty();
 }
 
 bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
@@ -1299,6 +1418,8 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
     d.completedSamples = 0;
     d.lastPassSubmitSeconds = 0.0;
     d.frameStats = HdRTVkFrameStats();
+    d.wantGuides = frame.guides;
+    d.guidesValid = false;
     if (!d.ready)
         return _Fail(error, "BeginFrame called before a successful Init");
     if (frame.width == 0 || frame.height == 0)
@@ -1309,6 +1430,17 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
         || (uint64_t(frame.width) + 7) / 8 > d.maxDispatchX || (uint64_t(frame.height) + 7) / 8 > d.maxDispatchY)
         return _Fail(error, "the image exceeds Vulkan buffer or dispatch limits");
     const VkDeviceSize bytes = pixels * 4 * sizeof(float);
+    const VkDeviceSize guideBytes = (frame.guides ? pixels : 1) * sizeof(HdRTVkGuide);
+    if (guideBytes > d.maxStorageBufferRange) return _Fail(error, "guide image exceeds Vulkan storage limit");
+    if (!d.lightTable.buffer && !SetLights({}, error)) return false;
+    if (!d.EnsureBuffer(guideBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                        false, &d.guideBuffer, error)) return false;
+    VkDescriptorBufferInfo guideInfo = {d.guideBuffer.buffer, 0, guideBytes};
+    VkWriteDescriptorSet guideWrite = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    guideWrite.dstSet = d.descriptorSet; guideWrite.dstBinding = 5;
+    guideWrite.descriptorCount = 1; guideWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    guideWrite.pBufferInfo = &guideInfo;
+    vkUpdateDescriptorSets(d.device, 1, &guideWrite, 0, nullptr);
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     if (!d.EnsureBuffer(bytes, usage, false, &d.accumBuffer, error))
         return false;
@@ -1337,6 +1469,8 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
     gpu.size[3] = frame.seed;
     gpu.pass[0] = 0;
     gpu.pass[1] = frame.orthographic ? 1u : 0u;
+    gpu.pass[2] = uint32_t(d.lights.size());
+    gpu.pass[3] = frame.guides ? 1u : 0u;
     std::memcpy(d.frameBuffer.mapped, &gpu, sizeof(gpu));
     if (!d.BeginCommands(error))
         return false;
@@ -1368,6 +1502,10 @@ bool HdRTVkFurnace::Impl::ResolveToHost(uint32_t samples, bool legacy, std::stri
     if (!EnsureBuffer(bytes, outputUsage, false, &resolvedBuffer, error)
         || !EnsureBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, &host, error, true))
         return false;
+    const bool copyGuides = wantGuides && !guidesValid;
+    const VkDeviceSize guideBytes = VkDeviceSize(width) * height * sizeof(HdRTVkGuide);
+    if (copyGuides && !EnsureBuffer(guideBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                    true, &guideReadback, error, true)) return false;
     RefreshFrameAllocations();
     const VkDescriptorBufferInfo buffers[2] = { {accumBuffer.buffer, 0, bytes}, {resolvedBuffer.buffer, 0, bytes} };
     VkWriteDescriptorSet writes[2] = {};
@@ -1411,8 +1549,30 @@ bool HdRTVkFurnace::Impl::ResolveToHost(uint32_t samples, bool legacy, std::stri
     toHost.size = bytes;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
                          0, 0, nullptr, 1, &toHost, 0, nullptr);
+    if (copyGuides && (hasScene || !lights.empty())) {
+        VkBufferMemoryBarrier guideBarrier = toCopy;
+        guideBarrier.buffer = guideBuffer.buffer; guideBarrier.size = guideBytes;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, nullptr, 1, &guideBarrier, 0, nullptr);
+        const VkBufferCopy guideCopy = {0, 0, guideBytes};
+        vkCmdCopyBuffer(cmd, guideBuffer.buffer, guideReadback.buffer, 1, &guideCopy);
+        guideBarrier = toHost;
+        guideBarrier.buffer = guideReadback.buffer; guideBarrier.size = guideBytes;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                             0, 0, nullptr, 1, &guideBarrier, 0, nullptr);
+    }
     if (!Submit(error))
         return false;
+    if (copyGuides) {
+        if (!hasScene && lights.empty()) {
+            const HdRTVkGuide miss = {{-1,-1,-1,1}, {-1,-1,-1,0}, {-1,-1,-1,0}, {0,0,0,0}};
+            std::fill_n(static_cast<HdRTVkGuide*>(guideReadback.mapped), size_t(width)*height, miss);
+        } else {
+            frameStats.readbackBytes += guideBytes;
+            ++frameStats.readbackCount;
+        }
+        guidesValid = true;
+    }
     frameStats.readbackBytes += bytes;
     if (legacy)
     {
@@ -1439,7 +1599,7 @@ bool HdRTVkFurnace::RenderBatch(uint32_t firstPass, uint32_t count, std::string*
     if (count == 0 || count > 32 || firstPass != d.completedSamples || count > UINT32_MAX - firstPass)
         return _Fail(error, "RenderBatch requires 1..32 contiguous samples within uint32 range");
     d.frameStats.lastBatchSeconds = 0.0;
-    if (!d.hasScene)
+    if (!d.hasScene && d.lights.empty())
     {
         d.completedSamples += count;
         return true;
@@ -1485,6 +1645,12 @@ bool HdRTVkFurnace::Resolve(uint32_t completedSamples, std::string* error)
 const float* HdRTVkFurnace::ResolvedPixels() const
 {
     return _impl->resolvedValid ? static_cast<const float*>(_impl->readbackBuffer.mapped) : nullptr;
+}
+
+const HdRTVkGuide* HdRTVkFurnace::ResolvedGuides() const
+{
+    return _impl->resolvedValid && _impl->guidesValid
+        ? static_cast<const HdRTVkGuide*>(_impl->guideReadback.mapped) : nullptr;
 }
 
 HdRTVkFrameStats HdRTVkFurnace::FrameStats() const

@@ -1,5 +1,37 @@
 # Progress
 
+## 2026-11-17 — reliable lighting, normals and diagnostic outputs (Phase 3)
+
+- Native Houdini Light/Light Mixer parameters drive distant, rectangle, disk and
+  uniformly scaled sphere lights alongside the uniform dome. Power-weighted NEE
+  and diffuse MIS preserve dome-only behavior; world-area normalization, exposure,
+  color temperature and small distant cones follow UsdLux conventions.
+- Authored normal interpolation/indexing becomes corner shading data. Normal-only
+  edits preserve geometry/BLAS/TLAS; Hydra IDs and authored polygon IDs remain real.
+  Deterministic primary guides supply normal, Neye, depth, cameraDepth, IDs and
+  albedo, published with beauty under the same generation check.
+- The existing integrated panel adds an on-demand bounded scene-support scan,
+  explicit path limitations and stale/partial status. Renderer capabilities come
+  from the installed plugin. Houdini's viewport depth convention is explicitly
+  OpenGL 0–1. Enable, pause/resume, Off restoration and the camera repair persist.
+- All offline acceptance passes: unchanged sealed s5/s4 with nonce
+  `4598160757163180536`; 40 independent lighting cases across 120 renders plus five
+  live/fresh controls; 14 GPU edge cases; 15 USD/Karma groups across three seeds;
+  five actual husk AOV cases. Vulkan validation is silent. Unknown AOVs now make
+  husk exit 1 with no image through its documented error-status contract.
+- Python 3.14: 464 passed/2 skipped; Python 3.12: 447 passed/19 skipped; actual
+  Houdini 22.0.429 USD/HOM: five passed. The 85 release inputs match hashes.
+- Installed `reliable-lighting-h22.0.429-c6c4a05a45ca`: 104 verified files,
+  15 surrounding registrations preserved and exact prior package retained.
+  Regular GUI and independent image/event judging PASS: native light edits,
+  scene-support updates, active pause/paused edits/resume, intended-viewer
+  isolation, previous paused Karma and mixed-grid restoration. Six images match
+  the independent reference; exposure doubles exactly. Camera p50/p95 is
+  100.3/104.4 ms in this fixture. Evidence and boundaries are recorded in
+  `docs/reliable-lighting-verification-2026-11-17.md`.
+- Material graphs/textures/HDRI, instancing, subdivision and denoising remain
+  later milestones; no second artist workflow was introduced.
+
 ## 2026-11-16 — scripted camera-edit delay repair
 
 - Diagnosed the reproduced four-second delay in Houdini 22.0.429's native

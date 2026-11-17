@@ -1,0 +1,242 @@
+[
+  {
+    "case": "dark",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "dome_control",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_delta",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_oblique",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_translation",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_below_receiver",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_double",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_exposure",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_tilted_normal",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_cone_12",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_normalized_12",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_cone_60",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_normalized_60",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect",
+    "relative_rmse": 3.7519088370040607e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_normalized",
+    "relative_rmse": 3.99943847585078e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_moved",
+    "relative_rmse": 4.508677570579995e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_backface",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_scaled_normalized",
+    "relative_rmse": 4.798651070151852e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk",
+    "relative_rmse": 1.7165850137245519e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk_normalized",
+    "relative_rmse": 1.8155904387795702e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk_moved",
+    "relative_rmse": 1.6989478865612776e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk_backface",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk_scaled_normalized",
+    "relative_rmse": 1.6625070586089612e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "sphere",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "sphere_normalized",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "sphere_moved",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "sphere_scaled_normalized",
+    "relative_rmse": 0.0,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_tilted",
+    "relative_rmse": 2.786309877978247e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk_tilted",
+    "relative_rmse": 2.295725379385248e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_small",
+    "relative_rmse": 2.4540417886469386e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_double",
+    "relative_rmse": 3.7519088370040607e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_exposure",
+    "relative_rmse": 3.7519088370040607e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "mixed",
+    "relative_rmse": 0.0004969321000754633,
+    "limit": 0.01,
+    "relative_mean_delta": 5.348904329416371e-05
+  },
+  {
+    "case": "mixed_reordered",
+    "relative_rmse": 0.0004969321000754613,
+    "limit": 0.01,
+    "relative_mean_delta": 5.348904329416371e-05
+  },
+  {
+    "case": "mixed_dome",
+    "relative_rmse": 0.00016417698224128037,
+    "limit": 0.01,
+    "relative_mean_delta": 1.7909693197815102e-05
+  },
+  {
+    "case": "light_removed",
+    "relative_rmse": 3.741570048886094e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "distant_shadow",
+    "relative_rmse": 0.0,
+    "limit": 0.02,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "rect_shadow",
+    "relative_rmse": 0.005760124776291825,
+    "limit": 0.02,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "disk_shadow",
+    "relative_rmse": 0.0005046398368962402,
+    "limit": 0.02,
+    "relative_mean_delta": null
+  },
+  {
+    "case": "blocker_behind_light",
+    "relative_rmse": 3.5929080468663927e-16,
+    "limit": 0.0001,
+    "relative_mean_delta": null
+  }
+]

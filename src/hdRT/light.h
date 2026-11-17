@@ -27,7 +27,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdRTLight final : public HdLight
 {
 public:
-    HdRTLight(SdfPath const& id);
+    HdRTLight(SdfPath const& id, TfToken const& type);
     ~HdRTLight() override = default;
 
     void Sync(HdSceneDelegate *sceneDelegate,
@@ -38,6 +38,8 @@ public:
 
     /// Removes this light from the scene.
     void Finalize(HdRenderParam *renderParam) override;
+private:
+    TfToken _type;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

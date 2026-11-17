@@ -10,6 +10,7 @@
 //
 #include "renderDelegate.h"
 
+#include "aov.h"
 #include "light.h"
 #include "log.h"
 #include "mesh.h"
@@ -40,11 +41,15 @@ const TfTokenVector HdRTRenderDelegate::SUPPORTED_RPRIM_TYPES =
     HdPrimTypeTokens->mesh,
 };
 
-// Step 4: the camera and an untextured dome light.
+// Matte lighting profile: uniform dome plus analytic finite and distant emitters.
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_SPRIM_TYPES =
 {
     HdPrimTypeTokens->camera,
     HdPrimTypeTokens->domeLight,
+    HdPrimTypeTokens->distantLight,
+    HdPrimTypeTokens->rectLight,
+    HdPrimTypeTokens->diskLight,
+    HdPrimTypeTokens->sphereLight,
 };
 
 const TfTokenVector HdRTRenderDelegate::SUPPORTED_BPRIM_TYPES =
@@ -237,6 +242,8 @@ HdRTRenderDelegate::GetDefaultAovDescriptor(TfToken const& name) const
     } else if (name == HdAovTokens->normal || name == HdAovTokens->Neye) {
         return HdAovDescriptor(HdFormatFloat32Vec3, false,
                                VtValue(GfVec3f(-1.0f)));
+    } else if (name == HdRTAlbedoAov()) {
+        return HdAovDescriptor(HdFormatFloat32Vec3, false, VtValue(GfVec3f(0.0f)));
     } else if (name == HdAovTokens->depth) {
         return HdAovDescriptor(HdFormatFloat32, false, VtValue(1.0f));
     } else if (name == HdAovTokens->cameraDepth) {
@@ -260,6 +267,7 @@ HdRTRenderDelegate::GetRenderStats() const
     stats["percentDone"] = 100.0 * double(s.completedSamples) / double(std::max(1, s.spp));
     stats["totalClockTime"] = s.renderSeconds;
     stats["rendererName"] = std::string("HoudiniRT");
+    stats["hrt_capability_profile_version"] = std::string("reliable-lighting-v1");
     // What this render actually used. verify/s3_delegate.sh compares hrt_seed with the seed it chose.
     stats["hrt_seed"] = s.seed;
     stats["hrt_spp"] = s.spp;
@@ -292,6 +300,7 @@ HdRTRenderDelegate::GetRenderStats() const
     stats["hrt_compatibility_readback_submits"] = int64_t(s.frame.compatibilityReadbackSubmits);
     stats["hrt_accumulation_bytes"] = int64_t(s.frame.accumulationBytes);
     stats["hrt_resolve_bytes"] = int64_t(s.frame.resolveBytes);
+    stats["hrt_guide_bytes"] = int64_t(s.frame.guideBytes);
     stats["hrt_readback_allocated_bytes"] = int64_t(s.frame.readbackBytesAllocated);
     stats["hrt_accumulation_memory"] = std::string(s.frame.accumulationDeviceLocal ? "device_local" : "unavailable");
     stats["hrt_resolve_memory"] = std::string(s.frame.resolveDeviceLocal ? "device_local" : "unavailable");
@@ -325,6 +334,9 @@ HdRTRenderDelegate::GetRenderStats() const
     if (!s.error.empty()) {
         stats["hrt_error"] = s.error;
     }
+    // SideFX's documented batch-error protocol; USD diagnostics alone do not
+    // fail husk. A superseded request's error must not abort its replacement.
+    stats["huskErrorStatus"] = !s.error.empty() && s.activeGeneration == s.sceneGeneration ? 1 : 0;
     return stats;
 }
 
@@ -408,8 +420,9 @@ HdRTRenderDelegate::CreateSprim(TfToken const& typeId,
     HDRT_DEBUG("CreateSprim %s %s", typeId.GetText(), sprimId.GetText());
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(sprimId);
-    } else if (typeId == HdPrimTypeTokens->domeLight) {
-        return new HdRTLight(sprimId);
+    } else if (std::find(SUPPORTED_SPRIM_TYPES.begin(), SUPPORTED_SPRIM_TYPES.end(), typeId)
+               != SUPPORTED_SPRIM_TYPES.end()) {
+        return new HdRTLight(sprimId, typeId);
     } else {
         TF_CODING_ERROR("HoudiniRT: unknown Sprim type %s", typeId.GetText());
     }
@@ -424,8 +437,9 @@ HdRTRenderDelegate::CreateFallbackSprim(TfToken const& typeId)
     // They'll use default values and won't be updated by a scene delegate.
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(SdfPath::EmptyPath());
-    } else if (typeId == HdPrimTypeTokens->domeLight) {
-        return new HdRTLight(SdfPath::EmptyPath());
+    } else if (std::find(SUPPORTED_SPRIM_TYPES.begin(), SUPPORTED_SPRIM_TYPES.end(), typeId)
+               != SUPPORTED_SPRIM_TYPES.end()) {
+        return new HdRTLight(SdfPath::EmptyPath(), typeId);
     } else {
         TF_CODING_ERROR("HoudiniRT: unknown Sprim type %s", typeId.GetText());
     }

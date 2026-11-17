@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "renderer": "HoudiniRT",
+  "profile_version": "reliable-lighting-v1",
+  "build_id": "reliable-lighting-v1-h22.0.429",
+  "supported_lights": ["domeLight", "distantLight", "rectLight", "diskLight", "sphereLight"],
+  "supported_aovs": ["color", "normal", "Neye", "depth", "cameraDepth", "primId", "elementId", "instanceId", "albedo"],
+  "limitations": [
+    "Matte constant displayColor; material graphs and textures are not evaluated",
+    "Uniform untextured domes are invisible to camera rays",
+    "Sphere lights require uniform scale without shear; treatAsPoint is unsupported",
+    "Light textures, shaping, filters, linking and shadow overrides are unsupported",
+    "Instancing and subdivision are unsupported; analytic primitive adapters are not assessed",
+    "Diagnostic AOVs use pixel-center hits; instanceId is -1 for uninstanced geometry"
+  ],
+  "aov_semantics": {
+    "normal": "World shading normal, miss (-1,-1,-1)",
+    "Neye": "Eye shading normal, miss (-1,-1,-1)",
+    "depth": "Projected depth [0,1], miss 1",
+    "cameraDepth": "Ray distance from eye (perspective) or near plane (orthographic), scene units, miss 0",
+    "primId": "Hydra primitive ID, miss/analytic emitter -1",
+    "elementId": "Authored polygon ID, miss/analytic emitter -1",
+    "instanceId": "-1; instancing is unsupported",
+    "albedo": "Matte constant displayColor, miss/analytic emitter black"
+  }
+}

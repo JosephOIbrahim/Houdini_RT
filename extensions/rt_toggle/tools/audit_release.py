@@ -58,6 +58,7 @@ REQUIRED_FILES = [
     "rt_runtime/session.py",
     "houdini/rt_panel.pypanel",
     "houdini/rt_shelf.shelf",
+    "houdini/UsdRenderers.json",
 ]
 REQUIRED_DIRS = ["tests"]
 

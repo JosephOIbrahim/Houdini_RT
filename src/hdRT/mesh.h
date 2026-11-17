@@ -10,6 +10,7 @@
 #ifndef HDRT_MESH_H
 #define HDRT_MESH_H
 
+#include "meshNormals.h"
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -27,10 +28,9 @@ struct HdRTMeshData;
 ///
 /// A Hydra mesh rprim. Sync() pulls points, topology, transform, visibility and the constant
 /// displayColor; triangulates through HdMeshUtil (a fan: n - 2 triangles per n-sided face); computes
-/// smooth vertex normals through Hd_SmoothNormals; and publishes the result to the delegate's
-/// HdRTScene. It renders the polygons as authored (no subdivision) and always uses smooth normals,
-/// whatever the subdivision scheme says: Karma shades a polygon mesh without authored normals smoothly
-/// (s4 notes, probe B). Sync does no GPU work.
+/// authored normals in Hydra's interpolation domains; and publishes immutable CPU data. Missing or
+/// invalid authored normals use the existing Hd_SmoothNormals fallback, independent of subdivision
+/// scheme (s4 notes, probe B). Normal-only edits do not rebuild geometry or world bounds. No GPU work.
 ///
 class HdRTMesh final : public HdMesh
 {
@@ -62,6 +62,10 @@ private:
     bool               _adjacencyValid = false;
     VtVec3iArray       _triangles;
     VtVec3fArray       _normals;
+    VtVec3fArray       _cornerNormals;
+    VtIntArray         _faceIds;
+    HdRTNormalSource  _normalSource;
+    std::string       _normalWarning;
     bool               _warnedInstanced = false;
     bool               _geometryValid = false;
     std::shared_ptr<const HdRTMeshData> _published;

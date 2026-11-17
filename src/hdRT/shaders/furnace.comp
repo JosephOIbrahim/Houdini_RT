@@ -2,6 +2,7 @@
 #extension GL_EXT_ray_query : require
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_GOOGLE_include_directive : require
 
 // furnace.comp - the step 4 kernel: Lambertian path tracing of the Hydra scene under a uniform dome.
 // (The file keeps its step 3 name so the build and the plugin resource path do not move.)
@@ -51,8 +52,9 @@ struct MeshGpu {
     uint64_t positions;
     uint64_t normals;
     uint64_t indices;
-    uint64_t padding;
+    uint64_t faceIds;
     vec4 albedo;
+    ivec4 metadata;
 };
 layout(std430, set = 0, binding = 3) readonly buffer MeshTable { MeshGpu rows[]; } meshes;
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer FloatArray { float v[]; };
@@ -112,7 +114,7 @@ vec3 transformed_normal(uint64_t address, uint v, mat3 normalTransform)
 
 // Closest hit along `direction`. On a hit: the triangle and the barycentrics of the hit point.
 bool trace(vec3 origin, vec3 direction, out uint mesh, out uint prim, out vec2 bary,
-           out mat4x3 objectToWorld, out mat4x3 worldToObject)
+           out mat4x3 objectToWorld, out mat4x3 worldToObject, out float distance)
 {
     rayQueryEXT rq;
     rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, origin, 0.0, direction, T_MAX);
@@ -124,10 +126,12 @@ bool trace(vec3 origin, vec3 direction, out uint mesh, out uint prim, out vec2 b
         bary = rayQueryGetIntersectionBarycentricsEXT(rq, true);
         objectToWorld = rayQueryGetIntersectionObjectToWorldEXT(rq, true);
         worldToObject = rayQueryGetIntersectionWorldToObjectEXT(rq, true);
+        distance = rayQueryGetIntersectionTEXT(rq, true);
         return true;
     }
     prim = 0u;
     bary = vec2(0.0);
+    distance = T_MAX;
     return false;
 }
 
@@ -158,9 +162,9 @@ void surface(uint mesh, uint prim, vec2 bary, vec3 direction,
 
     // Match the original renderer: normalize transformed vertex normals before interpolation.
     mat3 normalTransform = transpose(mat3(worldToObject));
-    vec3 s = w0 * transformed_normal(data.normals, i0, normalTransform)
-           + bary.x * transformed_normal(data.normals, i1, normalTransform)
-           + bary.y * transformed_normal(data.normals, i2, normalTransform);
+    vec3 s = w0 * transformed_normal(data.normals, data.metadata.y != 0 ? 3u*prim : i0, normalTransform)
+           + bary.x * transformed_normal(data.normals, data.metadata.y != 0 ? 3u*prim+1u : i1, normalTransform)
+           + bary.y * transformed_normal(data.normals, data.metadata.y != 0 ? 3u*prim+2u : i2, normalTransform);
     const float sl = length(s);
     if (!(sl > 1.0e-12) || isnan(sl) || isinf(sl))
     {
@@ -177,6 +181,9 @@ void surface(uint mesh, uint prim, vec2 bary, vec3 direction,
     ns = s;
 }
 
+#include "lighting.glsl"
+#include "guides.glsl"
+
 // Radiance along one camera ray, and whether the camera ray hit anything.
 vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
 {
@@ -184,6 +191,7 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
     vec3 throughput = vec3(1.0);
     vec3 radiance = vec3(0.0);
     covered = false;
+    float previousPdf = 0.0;
 
     // Segment 0 is the camera ray; segment k > 0 leaves the k-th hit. Hits 1 .. budget+1 scatter.
     for (uint seg = 0u; seg <= budget + 1u; ++seg)
@@ -191,11 +199,26 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         uint mesh, prim;
         vec2 bary;
         mat4x3 objectToWorld, worldToObject;
-        if (!trace(origin, direction, mesh, prim, bary, objectToWorld, worldToObject))
+        float meshDistance;
+        bool hitMesh = trace(origin, direction, mesh, prim, bary, objectToWorld, worldToObject, meshDistance);
+        float lightDistance; vec3 lightNormal; uint lightIndex;
+        if (closestLight(origin, direction, meshDistance, lightIndex, lightDistance, lightNormal)) {
+            LightGpu light = lights.rows[lightIndex];
+            float cosine = dot(lightNormal, -direction);
+            if (cosine > 0.0) {
+                float lightPdf = light.radiance.w * lightDistance*lightDistance / (light.basisUArea.w*cosine);
+                radiance += throughput * (seg == 0u ? light.selection.yzw :
+                    light.radiance.rgb * powerWeight(previousPdf, lightPdf));
+            }
+            if (seg == 0u) covered = true;
+            break;
+        }
+        if (!hitMesh)
         {
             if (seg > 0u)
             {
                 radiance += throughput * frame.dome.rgb;   // left the scene: the dome
+                radiance += throughput * distantEmission(direction, previousPdf);
             }
             break;                                         // a camera miss stays black, alpha 0
         }
@@ -215,12 +238,14 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         // Offset along the geometric normal, scaled with the magnitude of the position.
         const float m = max(1.0, max(abs(p.x), max(abs(p.y), abs(p.z))));
         origin = p + ng * (1.0e-4 * m);
+        if (frame.pass.z > 0u) radiance += throughput * directLight(origin, ng, ns, rng);
         // Cosine about the shading normal. A sample that falls below the geometric face carries no light
         // (the Lambert BRDF with a shading normal is zero there), so the path ends. Measured against Karma
         // CPU on nonce 101 (C6, 2026-11-11): mirroring such samples back up added a +0.1% bias and doubled
         // the FLIP gap (per-pixel residual against Karma, noise removed, about 2%); ending the path or
         // sampling about the face normal leaves about 1%, a level within 0.05%. Not zero: see DECISIONS.md.
         direction = cosine_hemisphere(ns, rng);
+        previousPdf = max(0.0, dot(ns, direction)) / PI;
         if (dot(direction, ng) <= 0.0)
         {
             break;
@@ -273,6 +298,7 @@ void main()
     if (pixel.x >= frame.size.x || pixel.y >= frame.size.y)
         return;
     const uint index = pixel.y * frame.size.x + pixel.x;
+    if (frame.pass.w != 0u && batch.parameters.x == 0u) writeGuide(pixel, index);
     // Add each sample to the existing sum in order. A separate batch subtotal would change
     // floating-point grouping, making the image depend on how interactive work was scheduled.
     precise vec4 running = accum.sum[index];

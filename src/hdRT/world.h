@@ -15,6 +15,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 struct HdRTWorldScene
 {
     std::map<SdfPath, std::shared_ptr<const HdRTMeshData>> meshes;
+    std::vector<HdRTVkLight> lights;
     uint64_t contentVersion = 0;
     float dome[3] = {0.0f, 0.0f, 0.0f};
     HdRTCensus census;

@@ -13,6 +13,23 @@ actually run.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
+### Added
+
+- On-demand **Check scene support** in the integrated HoudiniRT panel, using the
+  selected viewer's displayed USD stage and installed renderer capability profile.
+- Exact primitive-path findings for unsupported or unverified scene features;
+  explicit partial, cancelled, unavailable and outdated report states.
+- Per-light disclosure that rectangle, disk and sphere emitters remain visible
+  and opaque; Karma's light-geometry visibility/shadow switches are not evaluated.
+- Incremental main-thread inspection with bounded work, cancellation and stage
+  change tracking. Lighting remains controlled through native Light LOP/Light Mixer.
+- Profile provenance and report lifecycle tests, plus real USD schema/notice checks
+  runnable with Houdini's `hython`.
+- Houdini renderer configuration declares the native depth buffer's 0–1 range
+  and AOV support for correct viewport integration.
+
 ## [0.2.1] - 2026-11-16
 
 ### Fixed

@@ -79,6 +79,7 @@ REQUIRED_FILES = (
     "houdini/rt_panel.pypanel",
     "houdini/rt_shelf.shelf",
     "houdini/rt_node.py",
+    "houdini/UsdRenderers.json",
     "tests/conftest.py",
 )
 

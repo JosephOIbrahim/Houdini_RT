@@ -15,8 +15,10 @@
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/path.h"
+#include "vkFurnace.h"
 
 #include <cstdint>
+#include <cstring>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -46,12 +48,16 @@ struct HdRTMeshData
 {
     VtVec3fArray points;        ///< object-space positions, as authored
     VtVec3fArray normals;       ///< object-space smooth vertex normals (Hd_SmoothNormals), one per point
+    VtVec3fArray cornerNormals; ///< authored shading normals, three per triangle; empty uses smooth normals
     VtVec3iArray triangles;     ///< HdMeshUtil::ComputeTriangleIndices, indices into points
+    VtIntArray faceIds;         ///< authored polygon index for each triangulated primitive
+    int primId = -1;            ///< Hydra selection ID, never a transient GPU slot
     GfMatrix4d   transform{1.0}; ///< object to world
     GfVec3f      albedo{0.18f}; ///< constant displayColor; 18% grey when none is authored
     bool         visible = true;
-    uint64_t geometryVersion = 0; ///< changes only with positions, normals or topology
+    uint64_t geometryVersion = 0; ///< changes only with positions or topology
     uint64_t topologyVersion = 0; ///< changes only with topology (and first publication)
+    uint64_t normalVersion = 0;   ///< independently tracks shading data without rebuilding a BLAS
     HdRTCensus census;            ///< cached even while hidden; no per-frame vertex walk
 };
 
@@ -68,6 +74,7 @@ struct HdRTSceneSnapshot
     uint64_t contentVersion = 0;   ///< moves on every mesh or light change, and only then
     std::map<SdfPath, std::shared_ptr<const HdRTMeshData>> meshes;
     std::map<SdfPath, HdRTDomeData> domes;
+    std::map<SdfPath, HdRTVkLight> lights;
 };
 
 class HdRTScene
@@ -106,6 +113,23 @@ public:
         std::lock_guard<std::mutex> lock(_mutex);
         if (_snapshot.domes.erase(id))
             ++_snapshot.contentVersion;
+    }
+
+    void SetLight(SdfPath const& id, HdRTVkLight const& light)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto found = _snapshot.lights.find(id);
+        if (found != _snapshot.lights.end() &&
+            std::memcmp(&found->second, &light, sizeof(light)) == 0)
+            return;
+        _snapshot.lights[id] = light;
+        ++_snapshot.contentVersion;
+    }
+
+    void RemoveLight(SdfPath const& id)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_snapshot.lights.erase(id)) ++_snapshot.contentVersion;
     }
 
     /// A consistent copy. Mesh payloads are shared, immutable and cheap to copy.

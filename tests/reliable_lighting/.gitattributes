@@ -1,0 +1,5 @@
+# Preserve hash-bound references and executed harnesses byte for byte.
+analytic/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+installed/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+aov_host/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+gpu_edges/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

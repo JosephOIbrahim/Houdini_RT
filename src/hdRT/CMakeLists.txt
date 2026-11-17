@@ -40,7 +40,7 @@ foreach(kernel IN ITEMS furnace resolve)
         OUTPUT "${shader_spv}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
         COMMAND "${HRT_GLSLANG}" -V --target-env vulkan1.2 -S comp "${shader_src}" -o "${shader_spv}"
-        DEPENDS "${shader_src}"
+        DEPENDS "${shader_src}" shaders/lighting.glsl shaders/guides.glsl
         COMMENT "glslangValidator ${kernel}.comp"
         VERBATIM)
     list(APPEND HRT_SHADER_OUTPUTS "${shader_spv}")
@@ -55,6 +55,7 @@ add_library(hdRT SHARED
     renderer.cpp
     settings.cpp
     mesh.cpp
+    meshNormals.cpp
     light.cpp
     world.cpp
     vkFurnace.cpp)
@@ -76,4 +77,5 @@ set_target_properties(hdRT PROPERTIES PREFIX "" OUTPUT_NAME "hdRT")
 # Install the DLL as a plain file: the plugin exports no symbols, so there is no import library to install.
 install(FILES "$<TARGET_FILE:hdRT>" DESTINATION .)
 install(FILES plugInfo.json DESTINATION .)
+install(FILES capabilities.json DESTINATION .)
 install(FILES ${HRT_SHADER_OUTPUTS} DESTINATION shaders)

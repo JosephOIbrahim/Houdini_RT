@@ -30,6 +30,34 @@ struct HdRTVkMesh
     float transform[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
     float albedo[4] = {0.18f, 0.18f, 0.18f, 1.0f};
     bool visible = true;
+    size_t normalCount = 0; // zero preserves the legacy one-normal-per-vertex layout
+    bool cornerNormals = false;
+    uint64_t normalVersion = 0; // zero follows geometryVersion for legacy callers
+    const int32_t* faceIds = nullptr;
+    int32_t primId = -1;
+};
+
+/// World-space analytic emitter. All arrays match std430 vec4 alignment.
+/// type: 0 rectangle, 1 disk, 2 sphere, 3 distant. U/V are half extents for
+/// rectangles, radius vectors for disks. Sphere radius is normalRadius.w.
+/// Distant normal is emission direction; basisVCos.w is cos(angular diameter/2).
+struct HdRTVkLight
+{
+    float positionType[4] = {};
+    float basisUArea[4] = {}; // w = world surface area, or distant solid angle (0 derives from cosine)
+    float basisVCos[4] = {};
+    float normalRadius[4] = {};
+    float radiance[4] = {}; // rgb radiance, w computed selection probability
+    float selection[4] = {}; // x computed CDF, yzw camera radiance (allzero defaults to radiance.rgb)
+};
+
+/// Deterministic pixel-center surface data, independent of beauty sample jitter.
+struct HdRTVkGuide
+{
+    float normalDepth[4]; // world shading normal, projected depth
+    float eyeNormalDistance[4]; // eye shading normal, ray distance
+    int32_t ids[4]; // primitive, authored polygon, instance (-1), coverage
+    float albedo[4];
 };
 
 struct HdRTVkEditStats
@@ -45,6 +73,7 @@ struct HdRTVkFrameStats
     uint64_t resolveSubmits = 0, resolveDispatches = 0, clearSubmits = 0;
     uint64_t readbackBytes = 0, readbackCount = 0, compatibilityReadbackSubmits = 0;
     uint64_t accumulationBytes = 0, resolveBytes = 0, readbackBytesAllocated = 0;
+    uint64_t guideBytes = 0;
     double lastBatchSeconds = 0.0, maxBatchSeconds = 0.0;
     double lastResolveSeconds = 0.0, totalResolveSeconds = 0.0;
     bool accumulationDeviceLocal = false, resolveDeviceLocal = false;
@@ -62,6 +91,7 @@ struct HdRTVkFrame
     float dome[3] = { 0.0f, 0.0f, 0.0f };   ///< uniform dome radiance collected by paths that leave the scene
     uint32_t bounces = 16;          ///< diffuse bounces after the first hit
     uint32_t seed = 1;
+    bool guides = false;
 };
 
 /// How to bring the GPU up. Two HdRTVkOptions that compare equal need no re-initialisation.
@@ -95,6 +125,7 @@ public:
     /// Apply actual deltas from a complete current mesh view. No pointers are retained.
     /// All persistent scene buffers are device-local; stats count submitted work for this call.
     bool SetMeshes(const std::vector<HdRTVkMesh>& meshes, HdRTVkEditStats* stats, std::string* error);
+    bool SetLights(const std::vector<HdRTVkLight>& lights, std::string* error);
 
     /// Compatibility wrapper for one identity mesh with uniform per-triangle albedo.
     /// Nonuniform per-triangle albedo must be supplied as separate SetMeshes entries.
@@ -115,6 +146,7 @@ public:
     bool Resolve(uint32_t completedSamples, std::string* error);
     /// No GPU work. Valid after Resolve until BeginFrame, another Resolve, or Destroy.
     const float* ResolvedPixels() const;
+    const HdRTVkGuide* ResolvedGuides() const;
     HdRTVkFrameStats FrameStats() const;
 
     /// Compatibility: one sample, followed by a raw-sum readback. Production uses RenderBatch.

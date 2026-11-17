@@ -1,0 +1,2616 @@
+{
+  "schema": 2,
+  "created_utc": "2026-11-17T12:18:38.765782+00:00",
+  "oracle_revision": "v2: finite emitters occlude one another and replace dome over their projected solid angles; v1 incorrectly assumed transparent emitter geometry in mixed fixtures",
+  "previous_freeze_sha256": "545c8644364b750b9ab0a36b7e7bf26392e4a2875fd5bb7a661284c3bc9a88a8",
+  "previous_candidate_diagnostic": "../runs/20261117T121449Z-analytic-dca454cf; v1 failure preserved without alteration",
+  "scope": "Supplementary standalone GPU transport; NOT a sealed exam or proof of Hydra/UsdLux translation",
+  "samples_per_case": 6144,
+  "camera": {
+    "orthographic": true,
+    "eye": [
+      0,
+      0,
+      1
+    ],
+    "near": 0.1,
+    "far": 10,
+    "ray_origin_z": 0.9
+  },
+  "bounces": "0 permits primary-surface direct light and one escape; no indirect surface contribution",
+  "tolerances": {
+    "exact": {
+      "rgb_max_abs": 3e-05
+    },
+    "stochastic": {
+      "pooled_channel_mean_relative": 0.01,
+      "pooled_rgb_rmse_over_reference_rms": 0.04
+    },
+    "shadow": {
+      "pooled_channel_mean_relative": 0.025,
+      "pooled_rgb_rmse_over_reference_rms": 0.06
+    },
+    "alpha_max_abs": 1e-06,
+    "guides_normal_max_abs": 2e-05,
+    "guides_albedo_max_abs": 2e-06,
+    "guides_depth_distance_max_abs": 2e-05,
+    "oracle_coarse_fine_rmse_over_reference_rms": {
+      "stochastic": 0.0001,
+      "shadow": 0.02
+    },
+    "oracle_multi_emitter_visibility_relative_rmse": 0.01,
+    "oracle_multi_emitter_visibility_relative_mean": 0.002,
+    "live_fresh_max_abs": 0
+  },
+  "caveats": [
+    "GPU inputs are already normalized radiance: normalization/temperature/interpolation translation require independent USD/husk tests",
+    "Camera is below emitters, so primary analytic light visibility is not exercised",
+    "No universal variance superiority claim",
+    "Sphere receiver directions stay wholly above horizon",
+    "Ray-origin epsilon may introduce sub-tolerance energy difference"
+  ],
+  "self_check": {
+    "disk_relative": 2.220446049250313e-16,
+    "rect_relative": 2.220446049250313e-16,
+    "sphere_quadrature_relative": 4.67393762715318e-06
+  },
+  "cases": [
+    {
+      "name": "dark",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "dome_control",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0.7,
+        1.1,
+        0.4
+      ],
+      "lights": [],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_delta",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_oblique",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            -0.6,
+            0,
+            -0.8
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_translation",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            12,
+            -53,
+            72
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_below_receiver",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_double",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 2,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_exposure",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 1,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_tilted_normal",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0.6,
+        0,
+        0.8
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "distant_cone_12",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 12
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "distant_normalized_12",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "angle": 12
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "distant_cone_60",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 60
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "distant_normalized_60",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "angle": 60
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_normalized",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_moved",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0.6,
+            -0.35,
+            2.2
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_backface",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "rect_scaled_normalized",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "u": [
+            1.05,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.3,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "disk",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "disk_normalized",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "disk_moved",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            0.6,
+            -0.35,
+            2.2
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "disk_backface",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "exact"
+    },
+    {
+      "name": "disk_scaled_normalized",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "u": [
+            1.05,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.3,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "sphere",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "sphere",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "radius": 0.55
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "sphere_normalized",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "sphere",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "radius": 0.55
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "sphere_moved",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "sphere",
+          "position": [
+            0.6,
+            -0.35,
+            2.2
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "radius": 0.55
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "sphere_scaled_normalized",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "sphere",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": true,
+          "radius": 0.8
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_tilted",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            -0.6,
+            0,
+            -0.8
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.56,
+            0,
+            -0.42
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "disk_tilted",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            -0.6,
+            0,
+            -0.8
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.56,
+            0,
+            -0.42
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_small",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 100,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.025,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.025,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_double",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 2,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "rect_exposure",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 1,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "mixed",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            -0.7,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            1,
+            0.1,
+            0.05
+          ],
+          "intensity": 3,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        },
+        {
+          "type": "disk",
+          "position": [
+            0.8,
+            0.2,
+            2.7
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.1,
+            1,
+            0.2
+          ],
+          "intensity": 0.7,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        },
+        {
+          "type": "sphere",
+          "position": [
+            0,
+            -0.4,
+            2.4
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.1,
+            0.2,
+            1
+          ],
+          "intensity": 1.2,
+          "exposure": 0,
+          "normalize": false,
+          "radius": 0.55
+        },
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.2,
+            0.3,
+            0.1
+          ],
+          "intensity": 0.2,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "mixed_reordered",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.2,
+            0.3,
+            0.1
+          ],
+          "intensity": 0.2,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        },
+        {
+          "type": "sphere",
+          "position": [
+            0,
+            -0.4,
+            2.4
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.1,
+            0.2,
+            1
+          ],
+          "intensity": 1.2,
+          "exposure": 0,
+          "normalize": false,
+          "radius": 0.55
+        },
+        {
+          "type": "disk",
+          "position": [
+            0.8,
+            0.2,
+            2.7
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.1,
+            1,
+            0.2
+          ],
+          "intensity": 0.7,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        },
+        {
+          "type": "rect",
+          "position": [
+            -0.7,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            1,
+            0.1,
+            0.05
+          ],
+          "intensity": 3,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "mixed_dome",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0.17,
+        0.11,
+        0.23
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            -0.7,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            1,
+            0.1,
+            0.05
+          ],
+          "intensity": 3,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        },
+        {
+          "type": "disk",
+          "position": [
+            0.8,
+            0.2,
+            2.7
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.1,
+            1,
+            0.2
+          ],
+          "intensity": 0.7,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        },
+        {
+          "type": "sphere",
+          "position": [
+            0,
+            -0.4,
+            2.4
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.1,
+            0.2,
+            1
+          ],
+          "intensity": 1.2,
+          "exposure": 0,
+          "normalize": false,
+          "radius": 0.55
+        },
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.2,
+            0.3,
+            0.1
+          ],
+          "intensity": 0.2,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "light_removed",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            -0.7,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            1,
+            0.1,
+            0.05
+          ],
+          "intensity": 3,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": null,
+      "tolerance": "stochastic"
+    },
+    {
+      "name": "distant_shadow",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "distant",
+          "position": [
+            0,
+            0,
+            3
+          ],
+          "normal": [
+            0.6,
+            0,
+            -0.8
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "angle": 0
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": {
+        "x": 0,
+        "half_y": 10,
+        "z0": 0.3,
+        "z1": 1.5
+      },
+      "tolerance": "shadow"
+    },
+    {
+      "name": "rect_shadow",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            -1.0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": {
+        "x": 0,
+        "half_y": 10,
+        "z0": 0.3,
+        "z1": 1.5
+      },
+      "tolerance": "shadow"
+    },
+    {
+      "name": "disk_shadow",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "disk",
+          "position": [
+            -1.0,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.7,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": {
+        "x": 0,
+        "half_y": 10,
+        "z0": 0.3,
+        "z1": 1.5
+      },
+      "tolerance": "shadow"
+    },
+    {
+      "name": "blocker_behind_light",
+      "width": 24,
+      "height": 24,
+      "extent": 1.2,
+      "albedo": [
+        0.45,
+        0.3,
+        0.18
+      ],
+      "normal": [
+        0,
+        0,
+        1
+      ],
+      "dome": [
+        0,
+        0,
+        0
+      ],
+      "lights": [
+        {
+          "type": "rect",
+          "position": [
+            -1,
+            0,
+            3
+          ],
+          "normal": [
+            0,
+            0,
+            -1
+          ],
+          "color": [
+            0.9,
+            0.6,
+            0.3
+          ],
+          "intensity": 1,
+          "exposure": 0,
+          "normalize": false,
+          "u": [
+            0.7,
+            0,
+            0
+          ],
+          "v": [
+            0,
+            0.45,
+            0
+          ]
+        }
+      ],
+      "spp": 2048,
+      "seeds": [
+        479123,
+        1299721,
+        753649
+      ],
+      "bounces": 0,
+      "blocker": {
+        "x": -2,
+        "half_y": 10,
+        "z0": 4,
+        "z1": 10
+      },
+      "tolerance": "stochastic"
+    }
+  ]
+}

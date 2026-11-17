@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "scope": "Independent regular-GUI light-image and native workflow validation; not a sealed exam",
+  "declared_before_gui_candidate_capture": true,
+  "sample_budget": 256,
+  "receiver_samples_per_mesh": 256,
+  "receiver_border_pixels": 4,
+  "image_channel_mean_relative_error_max": 0.05,
+  "image_relative_rgb_rmse_max": 0.25,
+  "mean_standard_error_multiplier": 5,
+  "relative_quadrature_pixel_filter_floor": 0.01,
+  "alpha_full_coverage_max_abs": 0.00001,
+  "exposure_mean_ratio_relative_error_max": 0.005,
+  "exposure_scaled_relative_rmse_max": 0.005,
+  "reference": "Independent CPU area integration from exported camera, emitter and diffuse receiver USD attributes; all finite emitter geometry remains opaque including zero-power shapes. Pixel centers are fixed from camera/geometry, never selected by candidate RGB.",
+  "bounce_scope": "Although GUI settings request four extra bounces, the judge requires exactly two diffuse meshes, both coplanar at worldZ0 with +Z geometric/generated normals and no authored normal override. Scattered rays cannot hit another diffuse surface; analytic emitters terminate paths. Direct-only transport is exact for this restricted fixture, not a claim for arbitrary multipath scenes.",
+  "statistics": "SE is sample standard deviation of per-pixel candidate-minus-independent-reference residuals divided by sqrt(number of fixed interior sample pixels). It estimates Monte Carlo mean uncertainty across decorrelated pixels; numerical floor accounts for quadrature and one-pixel filter approximation. Both fixed ceilings also apply.",
+  "workflow": "Reparse raw session/request/present/batch/pause logs independently; require unfinished-render ACK, no work until resume, edited current image, unchanged capture generation, restored previous renderer/pause/grid and isolated second viewer."
+}

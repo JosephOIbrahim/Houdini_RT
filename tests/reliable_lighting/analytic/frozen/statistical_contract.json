@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "declared_before_v2_candidate_render": true,
+  "standard_error_multiplier": 5.0,
+  "base_relative_numerical_floor": 0.0005,
+  "oracle_error_safety_multiplier": 3.0,
+  "mean_standard_error": "sqrt(sum_pixels(sample_variance_across_independent_seed_images)/(pixel_count^2 * seed_count))",
+  "acceptance": "Each stochastic channel absolute mean error <= 5*estimated_SE + numerical_oracle_floor, AND original fixed relative mean/RMSE ceilings both hold",
+  "numerical_oracle_floor": "0.0005*abs(reference_mean) + 3*oracle_mean_error_bound",
+  "oracle_mean_error_bound": "Mixed-emitter cases use measured maximum coarse/fine relative channel mean delta times each reference mean; other cases use sqrt(3)*measured coarse/fine RGB RMSE (Cauchy-Schwarz bound). These are convergence estimates, not mathematical certified errors.",
+  "fixed_ceilings_unchanged": true,
+  "independence_assumption": "Separate fixed seed streams and decorrelated per-pixel stochastic samples. Confidence interval describes Monte Carlo sampling only, not quadrature/model uncertainty."
+}

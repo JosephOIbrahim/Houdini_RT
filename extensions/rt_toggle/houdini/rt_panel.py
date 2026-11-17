@@ -869,7 +869,12 @@ class RT_TogglePanel(QtWidgets.QWidget):
         self._viewer_list = ()
         self._last_action_error = ""
         self._diagnostics = None
+        self._support_scan = None
+        self._support_rendered_text = None
         self._build_render_ui()
+        self._support_timer = QtCore.QTimer(self)
+        self._support_timer.setInterval(16)
+        self._support_timer.timeout.connect(self._advance_scene_support)
         self._refresh_render_viewers(initial=True)
         self._render_timer = QtCore.QTimer(self)
         self._render_timer.setInterval(500)
@@ -929,6 +934,20 @@ class RT_TogglePanel(QtWidgets.QWidget):
         )
         note.setWordWrap(True)
         outer.addWidget(note)
+        self._support_check = QtWidgets.QPushButton("Check scene support")
+        self._support_check.setObjectName("rt_scene_support_check")
+        self._support_check.clicked.connect(self._check_scene_support)
+        outer.addWidget(self._support_check)
+        self._support_status = QtWidgets.QLabel("Scene support has not been checked.")
+        self._support_status.setObjectName("rt_scene_support_status")
+        self._support_status.setWordWrap(True)
+        outer.addWidget(self._support_status)
+        self._support_text = QtWidgets.QPlainTextEdit()
+        self._support_text.setObjectName("rt_scene_support_report")
+        self._support_text.setReadOnly(True)
+        self._support_text.setMaximumHeight(220)
+        self._support_text.setVisible(False)
+        outer.addWidget(self._support_text)
         self._diagnostics_button = QtWidgets.QPushButton("Assistant diagnostics…")
         self._diagnostics_button.setCheckable(True)
         self._diagnostics_button.toggled.connect(self._show_diagnostics)
@@ -939,6 +958,7 @@ class RT_TogglePanel(QtWidgets.QWidget):
         self._viewer = self._viewer_list[index - 1] if 0 < index <= len(self._viewer_list) else None
         self._last_action_error = ""
         self._refresh_render_state()
+        self._refresh_scene_support()
 
     def _refresh_render_viewers(self, checked=False, *, initial=False):
         try:
@@ -963,6 +983,7 @@ class RT_TogglePanel(QtWidgets.QWidget):
                 finally:
                     self._viewer_combo.blockSignals(False)
             self._refresh_render_state()
+            self._refresh_scene_support()
         except Exception as exc:
             self._render_toggle.setEnabled(False)
             self._render_pause.setEnabled(False)
@@ -1038,6 +1059,59 @@ class RT_TogglePanel(QtWidgets.QWidget):
     def _on_render_pause(self, checked=False):
         self._perform_render_action(self._render_controller.toggle_pause)
 
+    def _check_scene_support(self, checked=False):
+        scan = self._support_scan
+        if scan is not None and scan.report.state == "running":
+            scan.cancel()
+            self._refresh_scene_support()
+            return
+        if self._viewer is None:
+            self._refresh_scene_support()
+            return
+        if scan is not None:
+            scan.close()
+        self._support_scan = None
+        try:
+            from rt_runtime.scene_support import SceneSupportScan
+            self._support_scan = SceneSupportScan(self._viewer)
+            if self._support_scan.report.state == "running":
+                self._support_timer.start()
+            self._refresh_scene_support()
+        except Exception as exc:
+            self._support_status.setText("Scene support unavailable: " + str(exc))
+            self._support_text.setVisible(False)
+
+    def _advance_scene_support(self):
+        if self._support_scan is not None:
+            self._support_scan.step()
+        self._refresh_scene_support()
+
+    def _refresh_scene_support(self):
+        scan = self._support_scan
+        self._support_check.setEnabled(self._viewer is not None)
+        if scan is None:
+            return
+        if self._viewer is None:
+            scan.cancel("No target viewer; check again after choosing a viewer.")
+        else:
+            scan.check_current(self._viewer)
+        report = scan.report
+        running = report.state == "running"
+        self._support_check.setText("Cancel scene check" if running else "Check scene support")
+        if not running:
+            self._support_timer.stop()
+        labels = {"running": "Checking scene support", "complete": "Snapshot check complete",
+                  "partial": "Partial scene check", "stale": "Outdated scene check",
+                  "unavailable": "Scene support unavailable"}
+        self._support_status.setText("%s — %d prims, %d findings" %
+                                     (labels[report.state], report.inspected,
+                                      len(report.findings) + report.omitted_findings))
+        text = report.text()
+        if text != self._support_rendered_text:
+            self._support_text.setPlainText(text)
+            self._support_rendered_text = text
+        self._support_text.setVisible(True)
+
     def _show_diagnostics(self, visible):
         if visible and self._diagnostics is None:
             self._diagnostics = RuntimeDiagnosticsPanel(self)
@@ -1057,6 +1131,9 @@ class RT_TogglePanel(QtWidgets.QWidget):
 
     def hideEvent(self, event):
         self._render_timer.stop()
+        self._support_timer.stop()
+        if self._support_scan is not None:
+            self._support_scan.cancel("Panel hidden; check again for current findings.")
         self._sync_diagnostics_timer(False)
         super(RT_TogglePanel, self).hideEvent(event)
 

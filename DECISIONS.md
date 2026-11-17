@@ -1,5 +1,33 @@
 # DECISIONS — durable lessons, dated
 
+## 2026-11-17 (reliable lighting remains one artist workflow)
+- Edit lights through native Houdini Light/Light Mixer parameters. The integrated
+  controller owns viewer targeting, enable, pause, actual state and restoration;
+  it does not grow a parallel set of light parameters.
+- Use world-space emitter area for UsdLux normalization. Keep a stable solid angle
+  for small distant lights, and pair next-event sampling with BSDF-hit emission
+  using the light selection probability in both MIS weights.
+- Light geometry and diffuse energy have distinct meanings: a black area light
+  remains opaque, and a zero diffuse multiplier does not remove camera emission.
+  Independent mixed-light references must account for emitter occlusion and the
+  part of the dome that finite emitters obscure.
+- Authored corner normals are shading data, separate from position/topology
+  revisions. Keep actual Hydra IDs and coarse polygon IDs, not transient GPU slots.
+- Diagnostic AOVs use coherent pixel-center hits, separate from beauty randomness.
+  Never average integer IDs or silently publish clear images for unsupported AOVs.
+  Expose actual guide allocation and readback work in the same native statistics.
+- Declare OpenGL 0–1 depth through Houdini's UsdRenderers.json. Report critical
+  current-generation failures through `huskErrorStatus`: diagnostic logs and Tf
+  errors alone do not stop husk from successfully writing a clear image.
+- Validate new HOM calls against the actual installed class as well as mocks.
+  Native GUI verification caught a mocked getter name that did not exist.
+- Scene support is an explicit bounded inspection of the target viewer's stage,
+  labelled partial/stale when necessary. Resolve capability metadata from the
+  actual installed plugin; never substitute a newer source-tree capability list.
+- Phase 3 acceptance is supplementary: the sealed repository exams stop at s5.
+  Preserve those exams and run them in a copied runbox so generated evidence does
+  not modify protected source files. Install the exact accepted staged artifact.
+
 ## 2026-11-16 (scripted camera edits and native reference-floor drawing)
 - Measure from the artist's edit to a current image, not only from Hydra Execute.
   A short request-to-AOV time can conceal a host viewport stall before submission.

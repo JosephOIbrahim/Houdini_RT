@@ -1,0 +1,6 @@
+{
+  "HdRTRendererPlugin": {
+    "depthstyle": "opengl",
+    "aovsupport": true
+  }
+}

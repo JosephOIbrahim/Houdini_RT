@@ -3,11 +3,18 @@
 A Hydra render delegate for Houdini 22. Houdini (the Solaris viewport, or `husk` on the command line)
 loads it as a renderer called **HoudiniRT**.
 
-**Step 5: live scene edits.** The delegate syncs polygon meshes (points, topology, transform,
+**Phase 2B: GPU accumulation, batching and resolve.** The delegate syncs polygon meshes (points, topology, transform,
 visibility, constant `displayColor`) and untextured dome lights from Hydra. Meshes retain object-space
 geometry and individual acceleration structures on the GPU, traced with Vulkan ray queries: Lambertian surfaces, the dome
 lighting every path that leaves the scene, never visible to the camera. Not yet: materials, textures,
 other lights, instancing, subdivision, AOVs other than colour.
+
+Running sums stay in device-local GPU memory. Short batches trace consecutive samples; a separate
+compute pass resolves scene-linear RGBA for presentation. Only resolved images are read back to Houdini.
+Each new request starts with one sample, then adapts toward an estimated 8 ms batch duration, capped
+at 32 samples. The target is an estimate: a single sample or shared GPU scheduling can take longer.
+Pause takes effect at a completed batch boundary; Resume continues the same sequence unless the scene
+changed. Publication remains generation-checked, and the previous image remains available between updates.
 
 ## Build
 
@@ -21,7 +28,8 @@ cmake --build build/s4/cmake --config Release
 cmake --install build/s4/cmake --config Release --prefix build/plugin_stage
 ```
 
-`build/plugin_stage` then holds `plugInfo.json`, `hdRT.dll` and `shaders/furnace.spv`. Nothing is
+`build/plugin_stage` then holds `plugInfo.json`, `hdRT.dll`, `shaders/furnace.spv` and
+`shaders/resolve.spv`. Both shaders are required beside the installed plugin. Nothing is
 written anywhere else. The Vulkan SDK is needed only for `glslangValidator`; headers and the import
 library for Vulkan come from the Houdini install.
 
@@ -67,6 +75,7 @@ says which source was used. The step 3 furnace settings (`houdinirt:furnace:*`) 
 | `HOUDINIRT_DEBUG=1` | print what Houdini hands the delegate: settings, camera, AOV buffers |
 | `HOUDINIRT_S3_CONFIG=<file>` | fallback source for seed, spp and bounces (see above) |
 | `HOUDINIRT_ALLOW_SOFTWARE_DEVICE=1` | accept a CPU Vulkan driver. For tests on machines without a GPU only |
+| `HOUDINIRT_BATCH_LIMIT=1..32` | diagnostic batch cap for controlled comparisons; default 32. This is not an artist quality setting |
 
 ## What it prints
 
@@ -98,6 +107,14 @@ Live-edit diagnostics add `hrt_blas_builds`, `hrt_blas_refits`, `hrt_tlas_builds
 Counters measure executed work carried through cancelled requests until an image is published.
 `hrt_scene_generation` and `hrt_presented_generation` distinguish the requested frame from the shown
 frame. Debug logs include renderer identity and generation on each request and first/final publication.
+
+Accumulation diagnostics add trace/resolve submissions and dispatches, traced samples, clear submissions,
+readback count/bytes and allocated accumulation/resolve/readback storage. The `hrt_accumulation_memory`
+and `hrt_resolve_memory` values reflect actual selected allocation flags. `hrt_last_batch_ms`,
+`hrt_max_batch_ms` and resolve timings measure host submit-to-fence wall time, not GPU timestamps.
+`hrt_first_image_ms` measures request-to-current-publication, distinct from `hrt_edit_ms` (first trace submit).
+Active, GPU-frame and presented generations/samples identify which work each statistic describes.
+Pause request/acknowledgement epochs and `hrt_pause_latency_ms` record reaching a completed-work boundary.
 
 ## Files
 
@@ -140,8 +157,9 @@ furnace_standalone furnace.spv --empty
 
 - Materials beyond a constant `displayColor`, textures, lights other than an untextured dome, instancing,
   subdivision, render tags (proxy/guide toggles in the viewport).
-- Pause and resume are checked by the exam only by reading the source; Joe checked live pause in the
-  Solaris viewport on 2026-11-11 (DECISIONS.md).
 - AOVs other than colour (depth, ids, normals) are cleared and never written.
-- GPU accumulation is read back each pass. The CPU publishes a staged running average about thirty
-  times a second. GPU accumulation/batching/resolve improvements belong to the next performance phase.
+- The viewport still consumes a CPU render buffer, so each presented image crosses GPU-to-host memory.
+  GPU texture interop, denoising and extra guide outputs are later work.
+
+The protected sealed s5 exam retains the s4/Karma regression. There is no sealed s6 exam;
+supplementary accumulation and desktop interaction checks are documented under `docs/` and `tests/`.

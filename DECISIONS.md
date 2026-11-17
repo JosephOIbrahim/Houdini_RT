@@ -123,3 +123,34 @@
 - Installation uses a new immutable payload and replaces only the existing
   zz_houdinirt.json pointer after validation. The prior payload and package bytes
   remain available for rollback; other regular Houdini packages remain enabled.
+
+## 2026-11-16 (Phase 2B, GPU accumulation and presentation)
+
+- The user requested implementation, installation and regular Houdini verification
+  of the approved accumulation/batching/resolve milestone. No sealed s6 exam exists
+  in the inspected history. Acceptance combines unchanged sealed s5/s4 with clearly
+  labelled supplementary checks; no protected spec or exam is authored or modified.
+- Keep the integrated panel/controller and per-viewer ownership. This is a native
+  renderer change; new materials, denoising, guide AOVs and quality UI remain later.
+- Use device-local sums and resolved output, a separate resolve pipeline valid even
+  without a TLAS, and host readback only for presentation. The legacy standalone
+  raw-sum API is explicit, separately counted, and unused by the delegate.
+- A batch uses one dispatch with consecutive absolute sample indices and sequential
+  precise additions to the existing sum. Do not accumulate a separate batch subtotal:
+  that would make floating-point grouping depend on interactive scheduling.
+- Keep one in-flight submission on the render thread, completed by a reusable fence.
+  Start each request at one sample; adapt toward 8 ms with 1–32 samples and bounded
+  growth. This is a measured target, not a hard GPU deadline or an FPS promise.
+- Native pause flags describe the request. A separate epoch acknowledgement records
+  reaching a completed-work boundary. Active/requested/frame/presented generations
+  and sample counts remain distinct; only a generation-checked swap publishes pixels.
+- Report actual work, allocation flags/bytes, host submit-to-fence timings and
+  first-current-publication latency. Desktop observation includes polling delay;
+  it does not measure the physical display compositor.
+- A newer request generation alone does not prove a queued geometry edit arrived:
+  render settings can advance first. Desktop capture readiness must also require
+  the expected scene-content advancement and independently check the pixels.
+- Keep high sample budgets for active-pause evidence and a finite image-test
+  budget for flipbooks. Houdini's capture time limit did not stop the high-budget
+  bound-camera render in this harness. Preserve failed harness attempts and state
+  exactly which completed components contribute to acceptance.

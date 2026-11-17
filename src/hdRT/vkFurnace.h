@@ -38,6 +38,18 @@ struct HdRTVkEditStats
     uint64_t geometryUploadBytes = 0, tableUploadBytes = 0;
 };
 
+/// Per-frame actual work. Durations are host submit-to-fence wall times, not GPU timestamps.
+struct HdRTVkFrameStats
+{
+    uint64_t traceSubmits = 0, traceDispatches = 0, tracedSamples = 0;
+    uint64_t resolveSubmits = 0, resolveDispatches = 0, clearSubmits = 0;
+    uint64_t readbackBytes = 0, readbackCount = 0, compatibilityReadbackSubmits = 0;
+    uint64_t accumulationBytes = 0, resolveBytes = 0, readbackBytesAllocated = 0;
+    double lastBatchSeconds = 0.0, maxBatchSeconds = 0.0;
+    double lastResolveSeconds = 0.0, totalResolveSeconds = 0.0;
+    bool accumulationDeviceLocal = false, resolveDeviceLocal = false;
+};
+
 /// One image to render. Matrices are in GfMatrix4d memory order (row-major, row vectors), which a GLSL
 /// mat4 reads as the equivalent column-vector matrix, so they are uploaded as they are.
 struct HdRTVkFrame
@@ -55,7 +67,7 @@ struct HdRTVkFrame
 /// How to bring the GPU up. Two HdRTVkOptions that compare equal need no re-initialisation.
 struct HdRTVkOptions
 {
-    std::string spvPath;                ///< the compiled shaders/furnace.comp
+    std::string spvPath;                ///< furnace.spv; resolve.spv must be its sibling
     bool validation = false;            ///< load VK_LAYER_KHRONOS_validation if it is installed
     bool allowSoftwareDevice = false;   ///< accept a CPU rasteriser (tests on machines without a GPU only)
 
@@ -94,12 +106,24 @@ public:
     /// Sets the image size and parameters for the passes that follow and zeroes the accumulation.
     bool BeginFrame(const HdRTVkFrame& frame, std::string* error);
 
-    /// Adds one sample per pixel to the accumulation and waits for the GPU to finish.
+    /// Add 1..32 sequential samples, starting at the frame's next sample. Waits for one fence.
+    /// No readback occurs. Empty scenes advance the logical sample count without dispatching.
+    bool RenderBatch(uint32_t firstPass, uint32_t count, std::string* error);
+
+    /// Resolve all completed samples to averaged premultiplied RGBA and copy once to host memory.
+    /// completedSamples must equal the frame's nonzero logical sample count.
+    bool Resolve(uint32_t completedSamples, std::string* error);
+    /// No GPU work. Valid after Resolve until BeginFrame, another Resolve, or Destroy.
+    const float* ResolvedPixels() const;
+    HdRTVkFrameStats FrameStats() const;
+
+    /// Compatibility: one sample, followed by a raw-sum readback. Production uses RenderBatch.
     bool RenderPass(uint32_t passIndex, std::string* error);
     double LastPassSubmitSeconds() const;
 
     /// width * height * 4 floats: rgb = summed radiance, a = number of samples whose camera ray hit the
-    /// box. Row 0 is the bottom of the image. Valid between BeginFrame and the next BeginFrame/Destroy.
+    /// scene. Row 0 is the bottom. Valid after RenderPass until BeginFrame/RenderPass/Destroy.
+    /// Resolve never changes this compatibility snapshot. No GPU work occurs in this accessor.
     const float* Accumulation() const;
 
     /// Destroys every Vulkan object this class created, in order. Safe to call twice.

@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
@@ -77,6 +78,8 @@ struct Buffer
     VkDeviceMemory memory = VK_NULL_HANDLE;
     void* mapped = nullptr;
     VkDeviceSize size = 0;
+    VkDeviceSize allocationSize = 0;
+    VkMemoryPropertyFlags memoryProperties = 0;
 };
 
 // The KHR acceleration-structure entry points are not exported by the loader library; fetch them.
@@ -162,11 +165,14 @@ struct HdRTVkFurnace::Impl
     VkQueue queue = VK_NULL_HANDLE;
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    bool submissionPending = false;
     AsApi as;
     VkDeviceSize scratchAlignment = 1;
     uint64_t maxPrimitiveCount = 0;        // VkPhysicalDeviceAccelerationStructurePropertiesKHR
     uint64_t maxInstanceCount = 0;
     uint32_t maxStorageBufferRange = 0;    // VkPhysicalDeviceLimits
+    uint32_t maxDispatchX = 0, maxDispatchY = 0;
 
     std::map<std::string, std::unique_ptr<MeshGpu>> meshes;
     std::vector<MeshGpu*> slots;
@@ -182,16 +188,27 @@ struct HdRTVkFurnace::Impl
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    VkDescriptorSetLayout resolveSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout resolvePipelineLayout = VK_NULL_HANDLE;
+    VkShaderModule resolveShader = VK_NULL_HANDLE;
+    VkPipeline resolvePipeline = VK_NULL_HANDLE;
+    VkDescriptorPool resolveDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet resolveDescriptorSet = VK_NULL_HANDLE;
 
     Buffer frameBuffer;   // one FrameGpu, host visible
-    Buffer accumBuffer;   // one vec4 per pixel, host visible
+    Buffer accumBuffer, resolvedBuffer;   // device-local float4 images
+    Buffer readbackBuffer, legacyReadbackBuffer;   // host-visible, cached when supported
     uint32_t width = 0;
     uint32_t height = 0;
+    uint32_t completedSamples = 0;
+    bool frameValid = false, resolvedValid = false, legacyValid = false;
+    HdRTVkFrameStats frameStats;
 
     std::string deviceName;
     bool validationActive = false;
     bool ready = false;
     double lastPassSubmitSeconds = 0.0;
+    double lastSubmitWallSeconds = 0.0;
     std::atomic<int> validationErrors{ 0 };
     std::atomic<int> validationWarnings{ 0 };
 
@@ -205,10 +222,13 @@ struct HdRTVkFurnace::Impl
                       bool gpuReads = false);
     void DestroyBuffer(Buffer& b);
     bool EnsureBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible,
-                      Buffer* out, std::string* error);
+                      Buffer* out, std::string* error, bool cpuReads = false);
     bool Upload(Buffer& out, const void* data, VkDeviceSize bytes, VkDeviceSize offset, std::string* error);
     VkDeviceAddress BufferAddress(VkBuffer buffer) const;
     bool Submit(std::string* error, bool renderPass = false);
+    bool BeginCommands(std::string* error);
+    bool ResolveToHost(uint32_t samples, bool legacy, std::string* error);
+    void RefreshFrameAllocations();
     bool BuildAccel(VkAccelerationStructureTypeKHR type, const VkAccelerationStructureGeometryKHR& geometry, uint32_t primitiveCount,
                     Accel* out, std::string* error);
     void DestroyAccel(Accel& a);
@@ -222,6 +242,7 @@ struct HdRTVkFurnace::Impl
     void DestroyMesh(MeshGpu& mesh);
     void DestroyScene();
     bool CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error);
+    bool CreateResolvePipeline(const std::vector<uint32_t>& spirv, std::string* error);
     void Destroy();
 };
 
@@ -315,6 +336,10 @@ bool HdRTVkFurnace::Impl::CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usa
         HDRT_VK(vkAllocateMemory(device, &ai, nullptr, &out->memory));
     }
     HDRT_VK(vkBindBufferMemory(device, out->buffer, out->memory, 0));
+    VkPhysicalDeviceMemoryProperties selectedMemory;
+    vkGetPhysicalDeviceMemoryProperties(phys, &selectedMemory);
+    out->allocationSize = req.size;
+    out->memoryProperties = selectedMemory.memoryTypes[ai.memoryTypeIndex].propertyFlags;
     if (hostVisible)
         HDRT_VK(vkMapMemory(device, out->memory, 0, VK_WHOLE_SIZE, 0, &out->mapped));
     return true;
@@ -341,13 +366,13 @@ VkDeviceAddress HdRTVkFurnace::Impl::BufferAddress(VkBuffer buffer) const
 }
 
 bool HdRTVkFurnace::Impl::EnsureBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible,
-                                       Buffer* out, std::string* error)
+                                       Buffer* out, std::string* error, bool cpuReads)
 {
     if (out->buffer && out->size >= size)
         return true;
     Buffer next;
     const VkDeviceSize capacity = std::max(size, out->size);
-    if (!CreateBuffer(capacity, usage, hostVisible, &next, error))
+    if (!CreateBuffer(capacity, usage, hostVisible, &next, error, cpuReads))
     {
         DestroyBuffer(next);
         return false;
@@ -386,18 +411,44 @@ bool HdRTVkFurnace::Impl::Upload(Buffer& out, const void* data, VkDeviceSize byt
     return Submit(error);
 }
 
-// Ends the one command buffer, submits it and waits for the queue to drain.
+bool HdRTVkFurnace::Impl::BeginCommands(std::string* error)
+{
+    if (submissionPending)
+        return _Fail(error, "cannot reuse a command buffer while its submission is pending");
+    HDRT_VK(vkResetCommandBuffer(cmd, 0));
+    VkCommandBufferBeginInfo begin = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    HDRT_VK(vkBeginCommandBuffer(cmd, &begin));
+    return true;
+}
+
+// One in-flight submission, owned by the render thread. Cancellation is at batch boundaries:
+// Vulkan cannot cancel submitted work, so never reset a command buffer or release memory early.
 bool HdRTVkFurnace::Impl::Submit(std::string* error, bool renderPass)
 {
     HDRT_VK(vkEndCommandBuffer(cmd));
+    HDRT_VK(vkResetFences(device, 1, &fence));
     VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
+    const auto start = std::chrono::steady_clock::now();
     if (renderPass)
-        lastPassSubmitSeconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-    HDRT_VK(vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE));
-    HDRT_VK(vkQueueWaitIdle(queue));
+        lastPassSubmitSeconds = std::chrono::duration<double>(start.time_since_epoch()).count();
+    const VkResult submitted = vkQueueSubmit(queue, 1, &si, fence);
+    if (submitted != VK_SUCCESS)
+    {
+        ready = frameValid = false;
+        return _FailVk(error, submitted, "vkQueueSubmit");
+    }
+    submissionPending = true;
+    const VkResult waited = vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
+    lastSubmitWallSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    if (waited != VK_SUCCESS)
+    {
+        ready = frameValid = false;
+        return _FailVk(error, waited, "vkWaitForFences");
+    }
+    submissionPending = false;
     return true;
 }
 
@@ -607,6 +658,8 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     maxPrimitiveCount = asProps.maxPrimitiveCount;
     maxInstanceCount = asProps.maxInstanceCount;
     maxStorageBufferRange = props2.properties.limits.maxStorageBufferRange;
+    maxDispatchX = props2.properties.limits.maxComputeWorkGroupCount[0];
+    maxDispatchY = props2.properties.limits.maxComputeWorkGroupCount[1];
 
     uint32_t familyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(phys, &familyCount, nullptr);
@@ -668,6 +721,8 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     cbai.commandBufferCount = 1;
     HDRT_VK(vkAllocateCommandBuffers(device, &cbai, &cmd));
+    VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    HDRT_VK(vkCreateFence(device, &fenceInfo, nullptr, &fence));
     return true;
 }
 
@@ -936,6 +991,9 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     VkPipelineLayoutCreateInfo plci = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
     plci.setLayoutCount = 1;
     plci.pSetLayouts = &setLayout;
+    const VkPushConstantRange push = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 4 * sizeof(uint32_t) };
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &push;
     HDRT_VK(vkCreatePipelineLayout(device, &plci, nullptr, &pipelineLayout));
 
     VkShaderModuleCreateInfo smci = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
@@ -981,6 +1039,62 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     return true;
 }
 
+// Resolve has no scene descriptors, so it is also valid for a newly empty scene.
+bool HdRTVkFurnace::Impl::CreateResolvePipeline(const std::vector<uint32_t>& spirv, std::string* error)
+{
+    VkDescriptorSetLayoutBinding bindings[2] = {};
+    for (uint32_t k = 0; k < 2; ++k)
+    {
+        bindings[k].binding = k;
+        bindings[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[k].descriptorCount = 1;
+        bindings[k].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo layout = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+    layout.bindingCount = 2;
+    layout.pBindings = bindings;
+    HDRT_VK(vkCreateDescriptorSetLayout(device, &layout, nullptr, &resolveSetLayout));
+    const VkPushConstantRange push = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 4 * sizeof(uint32_t) };
+    VkPipelineLayoutCreateInfo pipelineInfo = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    pipelineInfo.setLayoutCount = 1;
+    pipelineInfo.pSetLayouts = &resolveSetLayout;
+    pipelineInfo.pushConstantRangeCount = 1;
+    pipelineInfo.pPushConstantRanges = &push;
+    HDRT_VK(vkCreatePipelineLayout(device, &pipelineInfo, nullptr, &resolvePipelineLayout));
+    VkShaderModuleCreateInfo module = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    module.codeSize = spirv.size() * sizeof(uint32_t);
+    module.pCode = spirv.data();
+    HDRT_VK(vkCreateShaderModule(device, &module, nullptr, &resolveShader));
+    VkComputePipelineCreateInfo compute = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    compute.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    compute.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    compute.stage.module = resolveShader;
+    compute.stage.pName = "main";
+    compute.layout = resolvePipelineLayout;
+    HDRT_VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &compute, nullptr, &resolvePipeline));
+    const VkDescriptorPoolSize poolSize = { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 };
+    VkDescriptorPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    HDRT_VK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &resolveDescriptorPool));
+    VkDescriptorSetAllocateInfo allocation = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+    allocation.descriptorPool = resolveDescriptorPool;
+    allocation.descriptorSetCount = 1;
+    allocation.pSetLayouts = &resolveSetLayout;
+    HDRT_VK(vkAllocateDescriptorSets(device, &allocation, &resolveDescriptorSet));
+    return true;
+}
+
+void HdRTVkFurnace::Impl::RefreshFrameAllocations()
+{
+    frameStats.accumulationBytes = accumBuffer.allocationSize;
+    frameStats.resolveBytes = resolvedBuffer.allocationSize;
+    frameStats.readbackBytesAllocated = readbackBuffer.allocationSize + legacyReadbackBuffer.allocationSize;
+    frameStats.accumulationDeviceLocal = (accumBuffer.memoryProperties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+    frameStats.resolveDeviceLocal = (resolvedBuffer.memoryProperties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+}
+
 // ---- teardown: every object, children before parents -----------------------------------------------
 
 void HdRTVkFurnace::Impl::Destroy()
@@ -989,6 +1103,17 @@ void HdRTVkFurnace::Impl::Destroy()
     if (device)
     {
         vkDeviceWaitIdle(device);
+        submissionPending = false;
+        if (resolvePipeline)
+            vkDestroyPipeline(device, resolvePipeline, nullptr);
+        if (resolveShader)
+            vkDestroyShaderModule(device, resolveShader, nullptr);
+        if (resolvePipelineLayout)
+            vkDestroyPipelineLayout(device, resolvePipelineLayout, nullptr);
+        if (resolveDescriptorPool)
+            vkDestroyDescriptorPool(device, resolveDescriptorPool, nullptr);
+        if (resolveSetLayout)
+            vkDestroyDescriptorSetLayout(device, resolveSetLayout, nullptr);
         if (pipeline)
             vkDestroyPipeline(device, pipeline, nullptr);
         if (shader)
@@ -1001,7 +1126,12 @@ void HdRTVkFurnace::Impl::Destroy()
             vkDestroyDescriptorSetLayout(device, setLayout, nullptr);
         DestroyBuffer(frameBuffer);
         DestroyBuffer(accumBuffer);
+        DestroyBuffer(resolvedBuffer);
+        DestroyBuffer(readbackBuffer);
+        DestroyBuffer(legacyReadbackBuffer);
         DestroyScene();
+        if (fence)
+            vkDestroyFence(device, fence, nullptr);
         if (pool)
             vkDestroyCommandPool(device, pool, nullptr);                // frees the command buffer with it
         vkDestroyDevice(device, nullptr);
@@ -1023,6 +1153,14 @@ void HdRTVkFurnace::Impl::Destroy()
     descriptorPool = VK_NULL_HANDLE;
     descriptorSet = VK_NULL_HANDLE;
     setLayout = VK_NULL_HANDLE;
+    resolvePipeline = VK_NULL_HANDLE;
+    resolveShader = VK_NULL_HANDLE;
+    resolvePipelineLayout = VK_NULL_HANDLE;
+    resolveDescriptorPool = VK_NULL_HANDLE;
+    resolveDescriptorSet = VK_NULL_HANDLE;
+    resolveSetLayout = VK_NULL_HANDLE;
+    fence = VK_NULL_HANDLE;
+    submissionPending = false;
     pool = VK_NULL_HANDLE;
     cmd = VK_NULL_HANDLE;
     queue = VK_NULL_HANDLE;
@@ -1033,13 +1171,20 @@ void HdRTVkFurnace::Impl::Destroy()
     as = AsApi();
     frameBuffer = Buffer();
     accumBuffer = Buffer();
+    resolvedBuffer = Buffer();
+    readbackBuffer = Buffer();
+    legacyReadbackBuffer = Buffer();
     instanceBuffer = Buffer();
     tlas = Accel();
     hasScene = false;
     width = 0;
     height = 0;
+    completedSamples = 0;
+    frameValid = resolvedValid = legacyValid = false;
+    frameStats = HdRTVkFrameStats();
     validationActive = false;
     lastPassSubmitSeconds = 0.0;
+    lastSubmitWallSeconds = 0.0;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1054,23 +1199,33 @@ HdRTVkFurnace::~HdRTVkFurnace()
 bool HdRTVkFurnace::Init(const HdRTVkOptions& options, std::string* error)
 {
     Destroy();
-
-    std::vector<uint32_t> spirv;
-    {
-        std::ifstream f(options.spvPath, std::ios::binary | std::ios::ate);
-        if (!f)
-            return _Fail(error, "cannot open the SPIR-V file '" + options.spvPath + "'");
-        const std::streamsize bytes = f.tellg();
-        if (bytes <= 0 || bytes % 4 != 0)
-            return _Fail(error, "the SPIR-V file '" + options.spvPath + "' is empty or truncated");
-        spirv.resize(size_t(bytes) / 4);
-        f.seekg(0);
-        f.read(reinterpret_cast<char*>(spirv.data()), bytes);
-    }
-
     Impl& d = *_impl;
-    const bool ok = d.CreateInstance(options.validation, error) && d.CreateDevice(options.allowSoftwareDevice, error) &&
-                    d.CreatePipeline(spirv, error);
+    bool ok = false;
+    try
+    {
+        const auto read = [&](const std::string& path, std::vector<uint32_t>* words) {
+            std::ifstream f(path, std::ios::binary | std::ios::ate);
+            if (!f)
+                return _Fail(error, "cannot open the SPIR-V file '" + path + "'");
+            const std::streamsize bytes = f.tellg();
+            if (bytes <= 0 || bytes % 4 != 0)
+                return _Fail(error, "the SPIR-V file '" + path + "' is empty or truncated");
+            words->resize(size_t(bytes) / 4);
+            f.seekg(0);
+            if (!f.read(reinterpret_cast<char*>(words->data()), bytes))
+                return _Fail(error, "could not read the complete SPIR-V file '" + path + "'");
+            return true;
+        };
+        std::vector<uint32_t> spirv, resolveSpirv;
+        const std::string resolvePath = (std::filesystem::path(options.spvPath).parent_path() / "resolve.spv").string();
+        ok = read(options.spvPath, &spirv) && read(resolvePath, &resolveSpirv)
+            && d.CreateInstance(options.validation, error) && d.CreateDevice(options.allowSoftwareDevice, error)
+            && d.CreatePipeline(spirv, error) && d.CreateResolvePipeline(resolveSpirv, error);
+    }
+    catch (const std::exception& exc)
+    {
+        _Fail(error, std::string("GPU initialization failed: ") + exc.what());
+    }
     if (!ok)
     {
         const std::string name = d.deviceName;
@@ -1140,35 +1295,34 @@ bool HdRTVkFurnace::HasScene() const
 bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
 {
     Impl& d = *_impl;
+    d.frameValid = d.resolvedValid = d.legacyValid = false;
+    d.completedSamples = 0;
+    d.lastPassSubmitSeconds = 0.0;
+    d.frameStats = HdRTVkFrameStats();
     if (!d.ready)
         return _Fail(error, "BeginFrame called before a successful Init");
     if (frame.width == 0 || frame.height == 0)
         return _Fail(error, "BeginFrame called with an empty image");
 
-    if (frame.width != d.width || frame.height != d.height || !d.accumBuffer.buffer)
-    {
-        HDRT_VK(vkQueueWaitIdle(d.queue));
-        d.DestroyBuffer(d.accumBuffer);
-        d.width = 0;
-        d.height = 0;
-        const VkDeviceSize bytes = VkDeviceSize(frame.width) * frame.height * 4 * sizeof(float);
-        if (d.maxStorageBufferRange && bytes > VkDeviceSize(d.maxStorageBufferRange))
-            return _Fail(error, "the image is larger than this device's maxStorageBufferRange allows");
-        if (!d.CreateBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &d.accumBuffer, error, /*cpuReads=*/true))
-            return false;
-        d.width = frame.width;
-        d.height = frame.height;
-
-        VkDescriptorBufferInfo accumInfo = { d.accumBuffer.buffer, 0, VK_WHOLE_SIZE };
-        VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        write.dstSet = d.descriptorSet;
-        write.dstBinding = 2;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo = &accumInfo;
-        vkUpdateDescriptorSets(d.device, 1, &write, 0, nullptr);
-    }
-    std::memset(d.accumBuffer.mapped, 0, size_t(d.accumBuffer.size));
+    const VkDeviceSize pixels = VkDeviceSize(frame.width) * frame.height;
+    if (pixels > UINT32_MAX || pixels * 4 * sizeof(float) > d.maxStorageBufferRange
+        || (uint64_t(frame.width) + 7) / 8 > d.maxDispatchX || (uint64_t(frame.height) + 7) / 8 > d.maxDispatchY)
+        return _Fail(error, "the image exceeds Vulkan buffer or dispatch limits");
+    const VkDeviceSize bytes = pixels * 4 * sizeof(float);
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (!d.EnsureBuffer(bytes, usage, false, &d.accumBuffer, error))
+        return false;
+    d.width = frame.width;
+    d.height = frame.height;
+    d.RefreshFrameAllocations();
+    VkDescriptorBufferInfo accumInfo = { d.accumBuffer.buffer, 0, bytes };
+    VkWriteDescriptorSet write = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+    write.dstSet = d.descriptorSet;
+    write.dstBinding = 2;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &accumInfo;
+    vkUpdateDescriptorSets(d.device, 1, &write, 0, nullptr);
 
     FrameGpu gpu = {};
     std::memcpy(gpu.invView, frame.invView, sizeof(gpu.invView));
@@ -1184,29 +1338,159 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
     gpu.pass[0] = 0;
     gpu.pass[1] = frame.orthographic ? 1u : 0u;
     std::memcpy(d.frameBuffer.mapped, &gpu, sizeof(gpu));
+    if (!d.BeginCommands(error))
+        return false;
+    VkMemoryBarrier before = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(d.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 1, &before, 0, nullptr, 0, nullptr);
+    vkCmdFillBuffer(d.cmd, d.accumBuffer.buffer, 0, bytes, 0);
+    VkMemoryBarrier after = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(d.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         0, 1, &after, 0, nullptr, 0, nullptr);
+    if (!d.Submit(error))
+        return false;
+    ++d.frameStats.clearSubmits;
+    d.frameValid = true;
+    return true;
+}
+
+bool HdRTVkFurnace::Impl::ResolveToHost(uint32_t samples, bool legacy, std::string* error)
+{
+    if (!ready || !frameValid)
+        return _Fail(error, "cannot read back an invalid frame");
+    const VkDeviceSize bytes = VkDeviceSize(width) * height * 4 * sizeof(float);
+    const VkBufferUsageFlags outputUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    Buffer& host = legacy ? legacyReadbackBuffer : readbackBuffer;
+    if (!EnsureBuffer(bytes, outputUsage, false, &resolvedBuffer, error)
+        || !EnsureBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, &host, error, true))
+        return false;
+    RefreshFrameAllocations();
+    const VkDescriptorBufferInfo buffers[2] = { {accumBuffer.buffer, 0, bytes}, {resolvedBuffer.buffer, 0, bytes} };
+    VkWriteDescriptorSet writes[2] = {};
+    for (uint32_t k = 0; k < 2; ++k)
+    {
+        writes[k].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[k].dstSet = resolveDescriptorSet;
+        writes[k].dstBinding = k;
+        writes[k].descriptorCount = 1;
+        writes[k].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[k].pBufferInfo = &buffers[k];
+    }
+    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    if (!BeginCommands(error))
+        return false;
+    VkMemoryBarrier before = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    before.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    before.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &before, 0, nullptr, 0, nullptr);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, resolvePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, resolvePipelineLayout, 0, 1, &resolveDescriptorSet, 0, nullptr);
+    const uint32_t parameters[4] = { width, height, samples, 0 };
+    vkCmdPushConstants(cmd, resolvePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
+    vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
+    VkBufferMemoryBarrier toCopy = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+    toCopy.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    toCopy.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    toCopy.srcQueueFamilyIndex = toCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toCopy.buffer = resolvedBuffer.buffer;
+    toCopy.size = bytes;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 1, &toCopy, 0, nullptr);
+    const VkBufferCopy copy = { 0, 0, bytes };
+    vkCmdCopyBuffer(cmd, resolvedBuffer.buffer, host.buffer, 1, &copy);
+    VkBufferMemoryBarrier toHost = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+    toHost.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    toHost.srcQueueFamilyIndex = toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toHost.buffer = host.buffer;
+    toHost.size = bytes;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                         0, 0, nullptr, 1, &toHost, 0, nullptr);
+    if (!Submit(error))
+        return false;
+    frameStats.readbackBytes += bytes;
+    if (legacy)
+    {
+        ++frameStats.compatibilityReadbackSubmits;
+        legacyValid = true;
+    }
+    else
+    {
+        ++frameStats.resolveSubmits;
+        ++frameStats.resolveDispatches;
+        ++frameStats.readbackCount;
+        frameStats.lastResolveSeconds = lastSubmitWallSeconds;
+        frameStats.totalResolveSeconds += lastSubmitWallSeconds;
+        resolvedValid = true;
+    }
+    return true;
+}
+
+bool HdRTVkFurnace::RenderBatch(uint32_t firstPass, uint32_t count, std::string* error)
+{
+    Impl& d = *_impl;
+    if (!d.ready || !d.frameValid)
+        return _Fail(error, "RenderBatch called before a successful BeginFrame");
+    if (count == 0 || count > 32 || firstPass != d.completedSamples || count > UINT32_MAX - firstPass)
+        return _Fail(error, "RenderBatch requires 1..32 contiguous samples within uint32 range");
+    d.frameStats.lastBatchSeconds = 0.0;
+    if (!d.hasScene)
+    {
+        d.completedSamples += count;
+        return true;
+    }
+    if (!d.BeginCommands(error))
+        return false;
+    VkMemoryBarrier barrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(d.cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    vkCmdBindPipeline(d.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d.pipeline);
+    vkCmdBindDescriptorSets(d.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d.pipelineLayout, 0, 1, &d.descriptorSet, 0, nullptr);
+    const uint32_t parameters[4] = { firstPass, count, 0, 0 };
+    vkCmdPushConstants(d.cmd, d.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), parameters);
+    vkCmdDispatch(d.cmd, (d.width + 7) / 8, (d.height + 7) / 8, 1);
+    if (!d.Submit(error, true))
+        return false;
+    d.completedSamples += count;
+    ++d.frameStats.traceSubmits;
+    ++d.frameStats.traceDispatches;
+    d.frameStats.tracedSamples += count;
+    d.frameStats.lastBatchSeconds = d.lastSubmitWallSeconds;
+    d.frameStats.maxBatchSeconds = std::max(d.frameStats.maxBatchSeconds, d.lastSubmitWallSeconds);
     return true;
 }
 
 bool HdRTVkFurnace::RenderPass(uint32_t passIndex, std::string* error)
 {
+    _impl->legacyValid = false;
+    return RenderBatch(passIndex, 1, error) && _impl->ResolveToHost(0, true, error);
+}
+
+bool HdRTVkFurnace::Resolve(uint32_t completedSamples, std::string* error)
+{
     Impl& d = *_impl;
-    if (!d.ready || !d.accumBuffer.buffer)
-        return _Fail(error, "RenderPass called before BeginFrame");
+    d.resolvedValid = false;
+    if (!d.ready || !d.frameValid || completedSamples == 0 || completedSamples != d.completedSamples)
+        return _Fail(error, "Resolve requires the current frame's nonzero completed sample count");
+    return d.ResolveToHost(completedSamples, false, error);
+}
 
-    // No scene: every camera ray misses, so the accumulation (zeroed in BeginFrame) is already the answer.
-    if (!d.hasScene)
-        return true;
+const float* HdRTVkFurnace::ResolvedPixels() const
+{
+    return _impl->resolvedValid ? static_cast<const float*>(_impl->readbackBuffer.mapped) : nullptr;
+}
 
-    static_cast<FrameGpu*>(d.frameBuffer.mapped)->pass[0] = passIndex;
-
-    HDRT_VK(vkResetCommandBuffer(d.cmd, 0));
-    VkCommandBufferBeginInfo bi = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    HDRT_VK(vkBeginCommandBuffer(d.cmd, &bi));
-    vkCmdBindPipeline(d.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d.pipeline);
-    vkCmdBindDescriptorSets(d.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, d.pipelineLayout, 0, 1, &d.descriptorSet, 0, nullptr);
-    vkCmdDispatch(d.cmd, (d.width + 7) / 8, (d.height + 7) / 8, 1);   // local size is 8 x 8 in furnace.comp
-    return d.Submit(error, true);
+HdRTVkFrameStats HdRTVkFurnace::FrameStats() const
+{
+    _impl->RefreshFrameAllocations();
+    return _impl->frameStats;
 }
 
 double HdRTVkFurnace::LastPassSubmitSeconds() const
@@ -1216,7 +1500,7 @@ double HdRTVkFurnace::LastPassSubmitSeconds() const
 
 const float* HdRTVkFurnace::Accumulation() const
 {
-    return static_cast<const float*>(_impl->accumBuffer.mapped);
+    return _impl->legacyValid ? static_cast<const float*>(_impl->legacyReadbackBuffer.mapped) : nullptr;
 }
 
 void HdRTVkFurnace::Destroy()

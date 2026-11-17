@@ -13,8 +13,8 @@
 //
 // HdRTRenderer sits between Hydra (render pass, render buffers, HdRenderThread) and the GPU kernel
 // (HdRTVkFurnace). The render pass hands it the camera, the image window, the AOV bindings and the furnace
-// parameters while the render thread is stopped; Render() then runs on the render thread, one sample per
-// pixel per pass, and writes the running average into the bound render buffers.
+// parameters as immutable requests. Render() traces bounded batches on the render thread and publishes
+// GPU-resolved averages through generation-checked buffer swaps.
 #ifndef HDRT_RENDERER_H
 #define HDRT_RENDERER_H
 
@@ -72,6 +72,16 @@ struct HdRTRenderStats
     double editMilliseconds = 0.0;
     uint64_t sceneGeneration = 0;
     uint64_t presentedGeneration = 0;
+    uint64_t activeGeneration = 0, frameGeneration = 0;
+    int presentedSamples = 0, frameSamples = 0;
+    bool currentImage = false;
+    double firstImageMilliseconds = 0.0; ///< belongs to presentedGeneration, not a pending request
+    HdRTVkFrameStats frame; ///< batch/resolve durations are host wall time including fence waits
+    int batchLimit = 32;
+    uint64_t pauseEpoch = 0, pauseAcknowledgedEpoch = 0;
+    bool pauseRequested = false, pauseAcknowledged = false;
+    double pauseLatencyMilliseconds = 0.0;
+    double pauseRequestedSeconds = 0.0, pauseAcknowledgedSeconds = 0.0; ///< monotonic clock
     std::string sceneMemory;
 };
 
@@ -87,6 +97,8 @@ public:
     /// Publish without waiting for the rendering/GPU thread. Latest complete request wins.
     void Submit(HdRTRenderRequest request);
     bool IsConverged() const;
+    /// Record intent on the calling thread; only the render thread acknowledges GPU quiescence.
+    void NotifyPause(bool paused);
 
     // ---- the render thread's body ---------------------------------------------------------------
 
@@ -108,6 +120,8 @@ private:
     bool _ValidateAovBindings();
     void _RenderFrame(HdRenderThread* renderThread);
     bool _Superseded() const;
+    void _CaptureFrameStats();
+    void _AcknowledgePause();
     void SetConfig(const HdRTFurnaceConfig& config);
     void SetScene(std::shared_ptr<const HdRTWorldScene> scene);
     void SetCamera(const GfMatrix4d& viewMatrix, const GfMatrix4d& projMatrix);
@@ -116,7 +130,7 @@ private:
     std::unique_ptr<HdRTRenderBuffer> _CreateClearedAov(size_t index);
     void MarkAovBuffersUnconverged();
     void _MarkAovBuffersConverged();
-    bool _WriteAovs(int completedSamples, unsigned int x0, unsigned int y0,
+    bool _WriteAovs(HdRenderThread* renderThread, int completedSamples, unsigned int x0, unsigned int y0,
                     unsigned int w, unsigned int h, std::string* error);
     void _Fail(const std::string& what);
 
@@ -148,6 +162,9 @@ private:
     mutable std::mutex _statsMutex;
     HdRTRenderStats _stats;
     std::atomic<int> _completedSamples;
+    uint64_t _frameGeneration = 0; // render-thread-owned accumulation identity
+    int _frameCompletedSamples = 0;
+    std::chrono::steady_clock::time_point _pauseRequestedAt; // guarded by _statsMutex
     mutable std::mutex _requestMutex;
     std::condition_variable _requestReady;
     std::shared_ptr<const HdRTRenderRequest> _requested;

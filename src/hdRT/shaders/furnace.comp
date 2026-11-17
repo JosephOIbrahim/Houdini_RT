@@ -6,7 +6,7 @@
 // furnace.comp - the step 4 kernel: Lambertian path tracing of the Hydra scene under a uniform dome.
 // (The file keeps its step 3 name so the build and the plugin resource path do not move.)
 //
-// One dispatch adds one sample to every pixel: a camera ray jittered inside its pixel (a box filter one
+// One dispatch adds a bounded batch of samples per pixel: camera rays jittered inside a box filter one
 // pixel wide), then a path. Each mesh has an object-space BLAS and a table row. The TLAS instance
 // carries its transform and visibility; geometry stays resident across placement/color edits.
 //
@@ -42,6 +42,9 @@ layout(std430, set = 0, binding = 2) buffer Accum
 {
     vec4 sum[];
 } accum;
+
+// Absolute sample indices preserve the random streams across batch boundaries and pause/resume.
+layout(push_constant) uniform Batch { uvec4 parameters; } batch;
 
 // Exact 48-byte MeshGpu layout in vkFurnace.cpp. Addresses refer to device-local indexed data.
 struct MeshGpu {
@@ -226,19 +229,14 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
     return radiance;
 }
 
-void main()
+vec4 traceSample(uvec2 pixel, uint sampleIndex)
 {
-    const uvec2 pixel = gl_GlobalInvocationID.xy;
     const uint width = frame.size.x;
     const uint height = frame.size.y;
-    if (pixel.x >= width || pixel.y >= height)
-    {
-        return;
-    }
     const uint index = pixel.y * width + pixel.x;
 
     // One decorrelated stream per pixel per pass: hash the path number, mix in the seed, hash again.
-    const uint path_number = frame.pass.x * (width * height) + index;
+    const uint path_number = sampleIndex * (width * height) + index;
     uint rng = mix32(frame.size.w + mix32(path_number + 0x9E3779B9u));
 
     // Pixel -> normalised device coordinates, jittered uniformly inside the pixel (a one-pixel box).
@@ -266,5 +264,19 @@ void main()
 
     bool covered;
     const vec3 radiance = path(origin, direction, rng, covered);
-    accum.sum[index] += vec4(radiance, covered ? 1.0 : 0.0);
+    return vec4(radiance, covered ? 1.0 : 0.0);
+}
+
+void main()
+{
+    const uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= frame.size.x || pixel.y >= frame.size.y)
+        return;
+    const uint index = pixel.y * frame.size.x + pixel.x;
+    // Add each sample to the existing sum in order. A separate batch subtotal would change
+    // floating-point grouping, making the image depend on how interactive work was scheduled.
+    precise vec4 running = accum.sum[index];
+    for (uint k = 0u; k < batch.parameters.y; ++k)
+        running += traceSample(pixel, batch.parameters.x + k);
+    accum.sum[index] = running;
 }

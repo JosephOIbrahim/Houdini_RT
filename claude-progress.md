@@ -1,5 +1,45 @@
 # Progress
 
+## 2026-11-16 — GPU accumulation, batching and resolve (Phase 2B)
+
+- The existing target viewer, Enable, Pause/Resume and Off restoration remain
+  the integrated artist workflow. No Python controller changes or new artist
+  controls. Running sums and resolved RGBA live in device-local buffers; a
+  dedicated GPU resolve averages scene-linear RGB and coverage alpha.
+- Batches preserve absolute sample indices and sequential accumulation. Each
+  request starts with one sample, then adapts toward 8 ms within 1–32 samples.
+  Readback occurs for first/final images, approximately 30 Hz presentation and
+  pending samples at Pause. Generation checks reject superseded publications.
+- Render-thread safe-point pause acknowledgement and separate requested,
+  active, GPU-frame and presented identities expose actual progress. Counters
+  report trace/resolve submissions, readbacks/bytes and actual memory placement;
+  timings are host submit-to-fence wall time, not GPU timestamps.
+- Unchanged sealed s5/s4 PASS: nonce `6981375414681118428`, s4 nonce
+  `828888709215242714`; source/exam hashes unchanged. All 22 live/fresh images
+  exact; s4/Karma FLIP p99 0.0247 < 0.045. Vulkan validation silent.
+  No sealed s6 exam exists; Phase 2B acceptance uses supplementary checks.
+- New 26-state GPU probe and independent judge PASS for batching, resolve,
+  analytic HDR/alpha, counters, reset/resize, invalid-call recovery and empty
+  scenes. Existing 24-state GPU edit compatibility probe also PASS.
+- Controlled three-repeat comparison against the previous installed renderer:
+  all six candidate RGBA images exactly equal baseline. Native renderer median
+  0.392 → 0.196 s at 384×216/1024 spp and 1.215 → 0.249 s at 1920×1080/256 spp.
+  HD uses 13 trace submissions and 3 readbacks; these are scene-specific results.
+- Tested payload installed as `gpu-accum-h22.0.429-21fdae8ebf43`; 91 payload
+  files verified and 15 surrounding registrations unchanged. Both SPIR-V
+  shaders ship together; prior payload and exact package bytes remain available.
+- Combined regular GUI acceptance PASS: unfinished render paused at 12,575 of
+  65,536 samples, acknowledged in 10.478 ms, held without GPU work for 30.008 s,
+  then resumed the same generation. Nine independent viewport EXRs prove live
+  and paused edits; panel recreation, viewer isolation and original paused
+  Karma restoration passed. Actual mouse navigation also changed the image.
+- All 60 edit timings are retained, including a roughly 3.7 s host event-loop
+  gap for scripted bound-camera edits despite short native publication times.
+  A same-fixture three-edit comparison reproduced the delay before this change
+  (median observation 4.104 s baseline / 3.934 s candidate). Its host cause remains
+  unresolved; no claim of general realtime viewport latency. Detailed component scopes,
+  harness corrections and evidence: `docs/gpu-accumulation-verification-2026-11-16.md`.
+
 ## 2026-11-16 — live scene edits (Phase 2A / s5)
 
 - One integrated HoudiniRT artist workflow remains: existing target viewer,

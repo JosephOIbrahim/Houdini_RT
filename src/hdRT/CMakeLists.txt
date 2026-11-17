@@ -32,16 +32,20 @@ if(NOT HRT_GLSLANG)
 endif()
 message(STATUS "HoudiniRT: GLSL compiler ${HRT_GLSLANG}")
 
-set(HRT_SHADER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/shaders/furnace.comp")
-set(HRT_SHADER_SPV "${CMAKE_CURRENT_BINARY_DIR}/shaders/furnace.spv")
-add_custom_command(
-    OUTPUT "${HRT_SHADER_SPV}"
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
-    COMMAND "${HRT_GLSLANG}" -V --target-env vulkan1.2 -S comp "${HRT_SHADER_SRC}" -o "${HRT_SHADER_SPV}"
-    DEPENDS "${HRT_SHADER_SRC}"
-    COMMENT "glslangValidator furnace.comp"
-    VERBATIM)
-add_custom_target(hdRT_shaders ALL DEPENDS "${HRT_SHADER_SPV}")
+set(HRT_SHADER_OUTPUTS)
+foreach(kernel IN ITEMS furnace resolve)
+    set(shader_src "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${kernel}.comp")
+    set(shader_spv "${CMAKE_CURRENT_BINARY_DIR}/shaders/${kernel}.spv")
+    add_custom_command(
+        OUTPUT "${shader_spv}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
+        COMMAND "${HRT_GLSLANG}" -V --target-env vulkan1.2 -S comp "${shader_src}" -o "${shader_spv}"
+        DEPENDS "${shader_src}"
+        COMMENT "glslangValidator ${kernel}.comp"
+        VERBATIM)
+    list(APPEND HRT_SHADER_OUTPUTS "${shader_spv}")
+endforeach()
+add_custom_target(hdRT_shaders ALL DEPENDS ${HRT_SHADER_OUTPUTS})
 
 add_library(hdRT SHARED
     rendererPlugin.cpp
@@ -72,4 +76,4 @@ set_target_properties(hdRT PROPERTIES PREFIX "" OUTPUT_NAME "hdRT")
 # Install the DLL as a plain file: the plugin exports no symbols, so there is no import library to install.
 install(FILES "$<TARGET_FILE:hdRT>" DESTINATION .)
 install(FILES plugInfo.json DESTINATION .)
-install(FILES "${HRT_SHADER_SPV}" DESTINATION shaders)
+install(FILES ${HRT_SHADER_OUTPUTS} DESTINATION shaders)

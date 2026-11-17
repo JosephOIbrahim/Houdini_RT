@@ -275,6 +275,39 @@ HdRTRenderDelegate::GetRenderStats() const
     stats["hrt_scene_memory"] = s.sceneMemory;
     stats["hrt_scene_generation"] = int64_t(s.sceneGeneration);
     stats["hrt_presented_generation"] = int64_t(s.presentedGeneration);
+    stats["hrt_active_generation"] = int64_t(s.activeGeneration);
+    stats["hrt_frame_generation"] = int64_t(s.frameGeneration);
+    stats["hrt_frame_samples"] = s.frameSamples;
+    stats["hrt_presented_samples"] = s.presentedSamples;
+    stats["hrt_current_image"] = s.currentImage;
+    stats["hrt_first_image_ms"] = s.firstImageMilliseconds;
+    stats["hrt_trace_submits"] = int64_t(s.frame.traceSubmits);
+    stats["hrt_trace_dispatches"] = int64_t(s.frame.traceDispatches);
+    stats["hrt_traced_samples"] = int64_t(s.frame.tracedSamples);
+    stats["hrt_resolve_submits"] = int64_t(s.frame.resolveSubmits);
+    stats["hrt_resolve_dispatches"] = int64_t(s.frame.resolveDispatches);
+    stats["hrt_clear_submits"] = int64_t(s.frame.clearSubmits);
+    stats["hrt_readback_bytes"] = int64_t(s.frame.readbackBytes);
+    stats["hrt_readback_count"] = int64_t(s.frame.readbackCount);
+    stats["hrt_compatibility_readback_submits"] = int64_t(s.frame.compatibilityReadbackSubmits);
+    stats["hrt_accumulation_bytes"] = int64_t(s.frame.accumulationBytes);
+    stats["hrt_resolve_bytes"] = int64_t(s.frame.resolveBytes);
+    stats["hrt_readback_allocated_bytes"] = int64_t(s.frame.readbackBytesAllocated);
+    stats["hrt_accumulation_memory"] = std::string(s.frame.accumulationDeviceLocal ? "device_local" : "unavailable");
+    stats["hrt_resolve_memory"] = std::string(s.frame.resolveDeviceLocal ? "device_local" : "unavailable");
+    stats["hrt_batch_limit"] = s.batchLimit;
+    stats["hrt_batch_target_ms"] = 8.0;
+    stats["hrt_last_batch_ms"] = s.frame.lastBatchSeconds * 1000.0;
+    stats["hrt_max_batch_ms"] = s.frame.maxBatchSeconds * 1000.0;
+    stats["hrt_last_resolve_ms"] = s.frame.lastResolveSeconds * 1000.0;
+    stats["hrt_total_resolve_ms"] = s.frame.totalResolveSeconds * 1000.0;
+    stats["hrt_pause_epoch"] = int64_t(s.pauseEpoch);
+    stats["hrt_pause_ack_epoch"] = int64_t(s.pauseAcknowledgedEpoch);
+    stats["hrt_pause_requested"] = s.pauseRequested;
+    stats["hrt_pause_acknowledged"] = s.pauseAcknowledged;
+    stats["hrt_pause_latency_ms"] = s.pauseLatencyMilliseconds;
+    stats["hrt_pause_requested_s"] = s.pauseRequestedSeconds;
+    stats["hrt_pause_ack_s"] = s.pauseAcknowledgedSeconds;
     // The translation census of what Hydra synced; verify/s4_firstlight.sh compares it with its own census
     // of the stage. Counts are ints, the box is double (husk keeps both types in the EXR header).
     stats["hrt_mesh_count"] = s.census.meshes;
@@ -311,6 +344,7 @@ bool
 HdRTRenderDelegate::Pause()
 {
     HDRT_DEBUG("Pause()");
+    _renderer.NotifyPause(true);
     _renderThread.PauseRender();
     _paused.store(true);
     return true;
@@ -320,6 +354,7 @@ bool
 HdRTRenderDelegate::Resume()
 {
     HDRT_DEBUG("Resume()");
+    _renderer.NotifyPause(false);
     _renderThread.ResumeRender();
     _paused.store(false);
     return true;

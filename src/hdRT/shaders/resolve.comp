@@ -1,0 +1,20 @@
+#version 460
+
+// Scene-linear RGBA resolve. This pipeline has no scene/TLAS dependency, so a newly empty
+// viewport can resolve cleared accumulation without binding invalid scene descriptors.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(std430, set = 0, binding = 0) readonly buffer Accum { vec4 sum[]; } accum;
+layout(std430, set = 0, binding = 1) writeonly buffer Resolved { vec4 rgba[]; } resolved;
+layout(push_constant) uniform ResolveInfo { uvec4 info; } resolve;
+
+void main()
+{
+    const uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (pixel.x >= resolve.info.x || pixel.y >= resolve.info.y)
+        return;
+    const uint index = pixel.y * resolve.info.x + pixel.x;
+    // Zero is reserved for the standalone raw-sum compatibility readback. Production always
+    // supplies a positive completed sample count. Alpha is coverage, averaged exactly like RGB.
+    const float inverseSamples = resolve.info.z == 0u ? 1.0 : 1.0 / float(resolve.info.z);
+    resolved.rgba[index] = accum.sum[index] * inverseSamples;
+}

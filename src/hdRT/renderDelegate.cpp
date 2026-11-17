@@ -284,7 +284,7 @@ HdRTRenderDelegate::GetRenderStats() const
     stats["percentDone"] = 100.0 * double(s.completedSamples) / double(std::max(1, s.spp));
     stats["totalClockTime"] = s.renderSeconds;
     stats["rendererName"] = std::string("HoudiniRT");
-    stats["hrt_capability_profile_version"] = std::string("reliable-materials-v1");
+    stats["hrt_capability_profile_version"] = std::string("textures-hdri-v1");
     // What this render actually used. verify/s3_delegate.sh compares hrt_seed with the seed it chose.
     stats["hrt_seed"] = s.seed;
     stats["hrt_spp"] = s.spp;
@@ -296,6 +296,12 @@ HdRTRenderDelegate::GetRenderStats() const
     stats["hrt_tlas_updates"] = int64_t(s.edits.tlasUpdates);
     stats["hrt_geometry_upload_bytes"] = int64_t(s.edits.geometryUploadBytes);
     stats["hrt_table_upload_bytes"] = int64_t(s.edits.tableUploadBytes);
+    stats["hrt_uv_upload_bytes"] = int64_t(s.edits.uvUploadBytes);
+    stats["hrt_texture_upload_bytes"] = int64_t(s.edits.textureUploadBytes);
+    stats["hrt_texture_cache_hits"] = int64_t(s.edits.textureCacheHits);
+    stats["hrt_image_decodes"] = int64_t(s.imageDecodes);
+    stats["hrt_image_cache_hits"] = int64_t(s.imageCacheHits);
+    stats["hrt_texture_diagnostics"] = s.textureDiagnostics;
     stats["hrt_edit_ms"] = s.editMilliseconds;
     stats["hrt_scene_memory"] = s.sceneMemory;
     stats["hrt_scene_generation"] = int64_t(s.sceneGeneration);

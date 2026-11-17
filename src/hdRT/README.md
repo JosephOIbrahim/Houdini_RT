@@ -158,11 +158,35 @@ furnace_standalone furnace.spv --albedo 0.3 0.5 0.7 --dome 1.2 0.9 0.6 --bounces
 furnace_standalone furnace.spv --empty
 ```
 
-## Not done yet
+## Current native artist workflow
 
-- Materials beyond a constant `displayColor`, textures, lights other than an untextured dome, instancing,
-  subdivision, render tags (proxy/guide toggles in the viewport).
-- AOVs other than colour (depth, ids, normals) are cleared and never written.
+HoudiniRT uses native Solaris Material Library/OpenPBR/Assign Material nodes.
+Seven opaque OpenPBR inputs accept constants or bounded MaterialX image graphs.
+`st` UVs retain indexed face-varying seams without splitting geometry; image,
+UV and HDRI changes update shading resources independently of acceleration
+structures. MaterialX Texcoord, Place2D and UsdTransform2d are supported with
+their native formulas. Dome Light accepts latlong HDRIs, named OCIO color spaces,
+rotation, exposure and the Houdini 22 DomeLight_1 pole-axis setting.
+
+`imageAssets` performs OIIO decoding and OCIO conversion in a bounded CPU worker.
+`sceneTextures` prepares immutable asset bindings on the render thread.
+`vkTextures`, `vkTextureUpload.inl`, `textures.glsl` and `environment.glsl` own
+device-local image data, explicit level-zero sampling and importance-sampled
+environment lighting. Native statistics distinguish UV, image and geometry
+uploads. The existing panel owns target selection, enable, pause/resume and
+restoration; image nodes and lights remain the artist's controls.
+
+The exact supported subset and fallback rules are in `capabilities.json` and
+`../../docs/textures-hdri-design-2026-11-17.md`. `tests/textures_hdri` contains
+independent UV/color/lighting references and installed workflow verification.
+The renderer supports uniform/textured domes, distant/rectangle/disk/sphere
+lights, and pixel-center normal/depth/ID/albedo guides in addition to beauty.
+
+## Remaining limitations
+
+- Arbitrary MaterialX graphs, additional OpenPBR lobes, material subsets, normal
+  maps, UDIM expansion, mip footprints, cubic filtering, instancing, subdivision
+  and render tags remain outside this bounded release.
 - The viewport still consumes a CPU render buffer, so each presented image crosses GPU-to-host memory.
   GPU texture interop, denoising and extra guide outputs are later work.
 

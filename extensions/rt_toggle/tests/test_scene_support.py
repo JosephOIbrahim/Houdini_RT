@@ -22,6 +22,8 @@ class Attr:
     def HasAuthoredValueOpinion(self): return True
     def GetMetadata(self, key): return self.interpolation
     def GetConnections(self): return self.connections
+    def GetNumTimeSamples(self): return 0
+    def GetPropertyStack(self, time): return [NS(HasDefaultValue=lambda: True, default=self.value)]
 
 
 class Prim:

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "renderer": "HoudiniRT",
-  "profile_version": "reliable-materials-v1",
-  "build_id": "reliable-materials-v1-h22.0.429",
+  "profile_version": "textures-hdri-v1",
+  "build_id": "textures-hdri-v1-h22.0.429",
   "supported_lights": ["domeLight", "distantLight", "rectLight", "diskLight", "sphereLight"],
   "supported_aovs": ["color", "normal", "Neye", "depth", "cameraDepth", "primId", "elementId", "instanceId", "albedo"],
   "material_support": {
-    "model": "openpbr-opaque-constants-v1",
+    "model": "openpbr-opaque-textures-v1",
     "surface_shader": "ND_open_pbr_surface_surfaceshader",
     "render_contexts": ["mtlx", ""],
     "parameters": {
@@ -52,18 +52,48 @@
     },
     "unsupported_explicit_inputs": ["geometry_normal", "geometry_coat_normal", "geometry_tangent", "geometry_coat_tangent"],
     "neutral_displacement": {"shader": "ND_displacement_float", "displacement": 0, "scale_default": 1},
-    "connections": "unsupported",
+    "connections": "bounded_images",
+    "textures": {
+      "image_shaders": {"float": "ND_image_float", "color3": "ND_image_color3"},
+      "uv_shaders": ["ND_texcoord_vector2", "ND_geompropvalue_vector2", "ND_UsdTransform2d", "ND_place2d_vector2"],
+      "primvar": "st",
+      "texcoord_index": 0,
+      "address_modes": ["constant", "clamp", "periodic", "mirror"],
+      "filters": ["closest", "linear"],
+      "max_graph_nodes": 16,
+      "max_graph_depth": 8
+    },
     "material_subsets": "unsupported",
     "fallback": "Whole-mesh matte displayColor Lambert"
   },
+  "environment_support": {
+    "schemas": ["DomeLight", "DomeLight_1"],
+    "formats": ["latlong", "automatic"],
+    "automatic_requires_2_to_1": true,
+    "max_textured_domes": 8,
+    "camera_background": "transparent"
+  },
+  "texture_resources": {
+    "max_image_texels": 16777216,
+    "max_scene_texels": 33554432,
+    "max_images": 128,
+    "max_bindings": 65536
+  },
   "limitations": [
-    "Bounded opaque isotropic OpenPBR constants only; unsupported materials use whole-mesh matte displayColor Lambert",
-    "Untagged constant colors are scene-linear RGB; any explicit nonempty colorSpace tag causes material fallback",
+    "Opaque isotropic OpenPBR constants and bounded native image graphs; unsupported materials use whole-mesh matte displayColor Lambert",
+    "Untagged constant colors are scene-linear RGB; nonempty colorSpace tags on constant inputs cause material fallback; image filename colorSpace is handled by the loader",
     "Authored roughness 0 uses OpenPBR numerical minimum 0.001; exact delta mirror is not implemented",
-    "Connected inputs, textures, material subsets and nondefault unsupported lobes are not evaluated",
-    "Uniform untextured domes are invisible to camera rays",
+    "Only the seven declared OpenPBR inputs accept images; arbitrary graphs, material subsets, normal maps and nondefault unsupported lobes are not evaluated",
+    "Texture stage inspection does not open files or validate decoding, image dimensions, texel values or color transforms; consult native renderer diagnostics",
+    "Empty image color space infers sRGB for color PNG/JPEG and linear for EXR/HDR; scalar/data images are raw; named color spaces use the native OCIO loader",
+    "Named image and HDRI color spaces convert through the active native OCIO scene_linear role; bounded material maps allow only 0.00003 numerical endpoint roundoff after nonidentity transforms before boundary correction",
+    "UDIMs, image sequences, mipmapping and cubic filtering are unsupported",
+    "Image graphs are bounded to 16 reachable nodes and depth 8 per input, including the image; constant borders must fit the target input range",
+    "Up to eight textured latitude-longitude domes illuminate surfaces and reflections; camera background remains transparent",
+    "Dome transforms require uniform scale with finite, nonsingular orthogonal axes; nonuniform scale and shear are unsupported",
+    "Native texture limits: 16777216 texels per image, 33554432 scene texels, 128 images and 65536 bindings; these are not decoded or counted by the UI scanner",
     "Sphere lights require uniform scale without shear; treatAsPoint is unsupported",
-    "Light textures, shaping, filters, linking and shadow overrides are unsupported",
+    "Finite-light textures, shaping, filters, linking and shadow overrides are unsupported",
     "OpenPBR requires light diffuse=1 and specular=1; diffuse scales both lobes and specular is ignored",
     "Instancing and subdivision are unsupported; analytic primitive adapters are not assessed",
     "Diagnostic AOVs use pixel-center hits; instanceId is -1 for uninstanced geometry"

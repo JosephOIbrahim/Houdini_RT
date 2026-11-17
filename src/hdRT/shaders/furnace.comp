@@ -34,7 +34,7 @@ layout(std430, set = 0, binding = 1) readonly buffer Frame
 {
     mat4 invView;        // camera space -> world space
     mat4 invProj;        // normalised device coordinates -> camera space
-    vec4 dome;           // rgb = dome radiance, a unused
+    vec4 dome;           // rgb = uniform dome radiance, a = textured dome count
     uvec4 size;          // width, height, bounces, seed
     uvec4 pass;          // pass index, orthographic flag, unused, unused
 } frame;
@@ -48,7 +48,7 @@ layout(std430, set = 0, binding = 2) buffer Accum
 // Absolute sample indices preserve the random streams across batch boundaries and pause/resume.
 layout(push_constant) uniform Batch { uvec4 parameters; } batch;
 
-// Exact 112-byte MeshRow layout in vkFurnace.cpp. Addresses refer to device-local indexed data.
+// Exact 160-byte MeshRow layout in vkFurnace.cpp. Addresses refer to device-local data.
 struct MeshGpu {
     uint64_t positions;
     uint64_t normals;
@@ -59,6 +59,10 @@ struct MeshGpu {
     vec4 baseColorWeight;
     vec4 specularColorWeight;
     vec4 materialProperties;
+    uint64_t uvs;
+    uint64_t padding;
+    ivec4 textures0;
+    ivec4 textures1;
 };
 layout(std430, set = 0, binding = 3) readonly buffer MeshTable { MeshGpu rows[]; } meshes;
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer FloatArray { float v[]; };
@@ -193,8 +197,10 @@ void surface(uint mesh, uint prim, vec2 bary, vec3 direction,
     ns = s;
 }
 
+#include "textures.glsl"
 #include "material.glsl"
 #include "lighting.glsl"
+#include "environment.glsl"
 #include "guides.glsl"
 
 // Radiance along one camera ray, and whether the camera ray hit anything.
@@ -231,7 +237,8 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         {
             if (seg > 0u)
             {
-                radiance += throughput * frame.dome.rgb;   // left the scene: the dome
+                radiance += throughput * (frame.dome.a > 0.0 ?
+                    environmentValue(direction)*(previousDelta ? 1.0 : powerWeight(previousPdf,environmentPdf(direction))) : frame.dome.rgb);
                 radiance += throughput * distantEmission(direction, previousPdf, previousDelta);
             }
             break;                                         // a camera miss stays black, alpha 0
@@ -253,8 +260,10 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         origin = p + ng * (1.0e-4 * m);
         if (meshes.rows[mesh].metadata.z != 0) {
             if (dot(ns, -direction) <= 0.0) break;
-            OpenPBR_PreparedBsdf bsdf = prepareMaterial(meshes.rows[mesh], ns, -direction);
+            MeshGpu material = texturedMaterial(meshes.rows[mesh], prim, bary);
+            OpenPBR_PreparedBsdf bsdf = prepareMaterial(material, ns, -direction);
             if (frame.pass.z > 0u) radiance += throughput * directMaterialLight(origin, ng, ns, bsdf, rng);
+            if (frame.dome.a > 0.0) radiance += throughput * directMaterialEnvironment(origin, ng, ns, bsdf, rng);
             OpenPBR_DiffuseSpecular weight;
             OpenPBR_BsdfLobeType lobe;
             vec3 randoms = vec3(randOpen01(rng), randOpen01(rng), randOpen01(rng));
@@ -267,6 +276,7 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
         throughput *= meshes.rows[mesh].albedo.rgb;
         previousDelta = false;
         if (frame.pass.z > 0u) radiance += throughput * directLight(origin, ng, ns, rng);
+        if (frame.dome.a > 0.0) radiance += throughput * directEnvironment(origin, ng, ns, rng);
         // Cosine about the shading normal. A sample that falls below the geometric face carries no light
         // (the Lambert BRDF with a shading normal is zero there), so the path ends. Measured against Karma
         // CPU on nonce 101 (C6, 2026-11-11): mirroring such samples back up added a +0.1% bias and doubled

@@ -13,6 +13,7 @@
 
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/light.h"
+#include <string>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -22,7 +23,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 /// A Hydra dome light sprim. Sync() reads intensity, exposure and color and publishes one uniform
 /// radiance, intensity * 2^exposure * color, to the delegate's HdRTScene. The dome lights paths that
 /// leave the scene; it is never visible to camera rays (a camera miss is black with alpha 0), whatever
-/// domeLightCameraVisibility says (Joe's decision of 2026-11-11). Textures are not supported yet.
+/// domeLightCameraVisibility says (Joe's decision of 2026-11-11). Image metadata is passed to the render thread.
 ///
 class HdRTLight final : public HdLight
 {
@@ -41,6 +42,7 @@ public:
 private:
     TfToken _type;
     bool _warnedLobeWeights = false;
+    std::string _domeWarning;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

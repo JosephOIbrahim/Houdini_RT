@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "vkTextures.h"
 
 /// Bounded opaque, isotropic OpenPBR constants. Matches three std430 vec4s.
 struct HdRTVkMaterial
@@ -46,6 +47,9 @@ struct HdRTVkMesh
     int32_t primId = -1;
     HdRTVkMaterial material;
     bool useOpenPbr = false;
+    const float* cornerUVs = nullptr; // 2 floats per triangle corner
+    uint64_t uvVersion = 0;
+    int32_t textureBindings[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
 };
 
 /// World-space analytic emitter. All arrays match std430 vec4 alignment.
@@ -75,6 +79,7 @@ struct HdRTVkEditStats
 {
     uint64_t blasBuilds = 0, blasRefits = 0, tlasBuilds = 0, tlasUpdates = 0;
     uint64_t geometryUploadBytes = 0, tableUploadBytes = 0;
+    uint64_t uvUploadBytes = 0, textureUploadBytes = 0, textureCacheHits = 0;
 };
 
 /// Per-frame actual work. Durations are host submit-to-fence wall times, not GPU timestamps.
@@ -137,6 +142,10 @@ public:
     /// All persistent scene buffers are device-local; stats count submitted work for this call.
     bool SetMeshes(const std::vector<HdRTVkMesh>& meshes, HdRTVkEditStats* stats, std::string* error);
     bool SetLights(const std::vector<HdRTVkLight>& lights, std::string* error);
+    bool SetTextures(const std::vector<std::shared_ptr<const HdRTVkTexture>>& textures,
+                     const std::vector<HdRTVkTextureBinding>& bindings,
+                     const std::vector<HdRTVkEnvironment>& environments,
+                     HdRTVkEditStats* stats, std::string* error);
 
     /// Compatibility wrapper for one identity mesh with uniform per-triangle albedo.
     /// Nonuniform per-triangle albedo must be supplied as separate SetMeshes entries.

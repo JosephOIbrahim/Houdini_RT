@@ -13,6 +13,18 @@ actually run.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
+### Added
+
+- Bounded native Image/UV graph and HDRI capability inspection in the existing
+  scene-support report; no separate material or lighting controls.
+- Exact property reasons for unsupported image signatures, controls, graph cycles,
+  excessive graph depth, missing `st`, dome projections and textured-dome limits.
+- Asset availability/decoding remains explicitly unassessed without filesystem or
+  image I/O on the UI thread; native renderer diagnostics own those failures.
+- Actual H22 node exports, color-context evidence, and real USD scanner tests.
+
 ## [0.4.0] - 2026-11-17
 
 ### Added

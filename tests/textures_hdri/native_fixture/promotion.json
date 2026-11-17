@@ -1,0 +1,29 @@
+{
+  "scope": "Original executed sources retained; only output-directory parsing/overwrite protection added to tracked copies",
+  "files": [
+    {
+      "source": "build\\m7\\native-texture-fixture\\create_fixture.py",
+      "source_sha256": "223c33419f0169d0294f2379536818cbd38e9b838ab22283ea6b3eb9224d868e",
+      "tracked": "tests\\textures_hdri\\native_fixture\\create_fixture.py",
+      "tracked_sha256": "6091b53031aeff5610e65c86a0cacb8340238a13695f00f460519caff1a8b3f6"
+    },
+    {
+      "source": "build\\m7\\native-texture-fixture\\probe_nodes.py",
+      "source_sha256": "64e33d0832134d360bd99caee8c1d8edb019527a3d346aafd150091467c350f8",
+      "tracked": "tests\\textures_hdri\\native_fixture\\probe_nodes.py",
+      "tracked_sha256": "9fb60cb39730c10f715da71493b739322e317bb0efcafe4919a398aa30ce7e94"
+    },
+    {
+      "source": "build\\m7\\native-texture-fixture\\probe_ocio.py",
+      "source_sha256": "7ef27ccfba0803f863970640a4a425277f34f902cdeb38fc1eeb18f66bdf162f",
+      "tracked": "tests\\textures_hdri\\native_fixture\\probe_ocio.py",
+      "tracked_sha256": "8a70703761ceece48d654f7fa6c6f77800f5a45e5f52bd66ed160c8a5b53c682"
+    },
+    {
+      "source": "build\\m7\\native-texture-fixture\\probe_asset_metadata.py",
+      "source_sha256": "033c2826f684098f1debfbb73961835a64d4921b951722323109f0f991e8369f",
+      "tracked": "tests\\textures_hdri\\native_fixture\\probe_asset_metadata.py",
+      "tracked_sha256": "cc928649c7342b94a82508bfcd18205d0b9ee42b09de24575dddde7a56d7727c"
+    }
+  ]
+}

@@ -11,6 +11,7 @@
 #define HDRT_MESH_H
 
 #include "meshNormals.h"
+#include "meshUV.h"
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
@@ -65,6 +66,9 @@ private:
     VtVec3fArray       _cornerNormals;
     VtIntArray         _faceIds;
     HdRTNormalSource  _normalSource;
+    HdRTUVSource      _uvSource;
+    VtVec2fArray      _cornerUVs;
+    std::string       _uvReason = "st UV primvar is missing";
     std::string       _normalWarning;
     bool               _warnedInstanced = false;
     bool               _geometryValid = false;

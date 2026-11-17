@@ -1,4 +1,4 @@
-# HoudiniRT controls — v0.4.0
+# HoudiniRT controls — v0.5.0
 
 One artist workflow for the HoudiniRT Hydra renderer in Houdini 22 / Solaris.
 The main toggle enables the renderer in the **chosen Scene Viewer**. It does
@@ -39,21 +39,21 @@ reference-floor drawing, not a change to render quality or camera clipping.
 Choose the intended viewer, then click **Check scene support**. The panel compares
 that viewer's displayed USD stage with the matching installed HoudiniRT capability
 profile. Findings name exact primitive paths and explain ignored or unverified
-features, including materials, light textures/shaping/linking, instancing,
+features, including materials, texture graphs, light shaping/linking, instancing,
 subdivision and authored RenderVar requests. Edit supported lights through
 Houdini's **Light LOP** or **Light Mixer**; the panel does not create parallel controls.
 
 Use a native **Material Library** with a **USD MaterialX Builder**, connect an
 **OpenPBR Surface**, and bind it through **Assign Material**. This release supports
-opaque isotropic constants: base color/weight/metalness and specular
-color/weight/roughness/IOR. Colors and weights use 0–1; IOR uses 1–3.
+opaque isotropic constants and bounded image inputs: base color/weight/metalness
+and specular color/weight/roughness/IOR. Colors and weights use 0–1; IOR uses 1–3.
 Keep other inputs at their node-definition defaults, including diffuse roughness 0.
-Colors must be untagged scene-linear RGB. Authored roughness 0 uses a numerical
+Constant colors must be untagged scene-linear RGB. Authored roughness 0 uses a numerical
 minimum of 0.001; exact delta mirrors are not implemented.
 
 The report resolves full-purpose material assignments, including inherited
 bindings, and names the exact property that triggers whole-mesh matte displayColor
-fallback. Shader-output connections, explicit color-space tags, material face subsets,
+fallback. Arbitrary shader graphs, color-space tags on constants, material face subsets,
 active displacement and other shader models are outside this release.
 The native builder's unchanged zero-displacement output is accepted.
 Unused material definitions do not produce fallback warnings. Material edits mark
@@ -63,6 +63,35 @@ factor scales both lobes, and the specular factor is ignored. Other values recei
 a path-specific limitation. Material and light editing stay in Houdini's native nodes.
 Interface-input connections are marked **Not assessed**: Hydra can flatten them
 into supported constants, so the report does not claim that they necessarily fall back.
+
+Connect native **MtlX Image** nodes directly to the supported OpenPBR inputs. Use
+Color for color inputs and Float for scalar inputs. UVs use `st`: **MtlX Texcoord**
+index 0 or **MtlX Geompropvalue** named `st`, optionally through **MtlX Place2D**
+or **MtlX USD Transform2D**. Constant 2D coordinates are also supported. Place2D and
+USD Transform2D have different native transform semantics. Addressing supports
+constant, clamp, periodic and mirror; filtering supports closest and linear.
+UDIMs, sequences, normal maps, arbitrary graph nodes, mipmaps and cubic filtering
+remain outside this release. Each image graph is limited to 16 nodes and depth 8,
+including the image node. Constant-address borders must fit the target input range;
+for IOR, explicitly set a border/default in 1–3 if using constant addressing.
+
+Use **Dome Light** with a latitude-longitude HDRI and its native rotation/pole-axis
+controls. Up to eight textured domes illuminate surfaces and reflections. Camera
+background remains transparent. Automatic projection requires a 2:1 image.
+Dome transforms require uniform scale without shear.
+Image File Color Space is interpreted by the native loader using Houdini's OCIO
+context; empty color metadata infers sRGB for color PNG/JPEG and linear for EXR/HDR.
+Scalar/data maps use raw values.
+Named image/HDRI spaces convert to the active native OCIO `scene_linear` role.
+For bounded material maps, nonidentity transforms allow only 0.00003 of numerical
+endpoint roundoff before boundary correction; raw and identity transforms retain
+strict input bounds. HDRI radiance is not restricted to 0–1.
+
+The support report does not open, resolve or decode asset files and does not claim
+that an image exists or can be loaded. It reports these checks as **Not assessed**.
+Actual asset, decoding and color-processing failures appear in native renderer
+warnings/logs and the `hrt_texture_diagnostics` render statistic. Houdini 22's
+Python viewer API does not expose that statistic to this panel.
 
 Rectangle, disk and sphere lights are visible opaque emitters in HoudiniRT.
 Karma's `renderlightgeo` and `lightgeocastsshadow` switches are not evaluated,

@@ -16,6 +16,7 @@ struct HdRTWorldScene
 {
     std::map<SdfPath, std::shared_ptr<const HdRTMeshData>> meshes;
     std::map<SdfPath, std::shared_ptr<const HdRTMaterialData>> materials;
+    std::map<SdfPath, HdRTDomeData> domes;
     std::vector<HdRTVkLight> lights;
     uint64_t contentVersion = 0;
     float dome[3] = {0.0f, 0.0f, 0.0f};
@@ -36,7 +37,8 @@ std::shared_ptr<const HdRTWorldScene> HdRTBuildScene(HdRTSceneSnapshot const& sn
 /// Resolve immutable material data without modifying mesh geometry or versions.
 /// A false result leaves the legacy displayColor Lambert path in use.
 bool HdRTResolveMeshMaterial(const HdRTWorldScene& world, const HdRTMeshData& mesh,
-                             HdRTVkMaterial* material, std::string* reason);
+                             HdRTVkMaterial* material, std::string* reason,
+                             const HdRTMaterialData** data = nullptr);
 
 /// Compatibility spelling for existing callers; no geometry is flattened.
 inline std::shared_ptr<const HdRTWorldScene> HdRTFlattenScene(HdRTSceneSnapshot const& snapshot)

@@ -7,8 +7,10 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 bool HdRTResolveMeshMaterial(const HdRTWorldScene& world, const HdRTMeshData& mesh,
-                             HdRTVkMaterial* material, std::string* reason)
+                             HdRTVkMaterial* material, std::string* reason,
+                             const HdRTMaterialData** data)
 {
+    if (data) *data = nullptr;
     *material = HdRTVkMaterial();
     reason->clear();
     if (mesh.materialSubsetsUnsupported) {
@@ -25,7 +27,16 @@ bool HdRTResolveMeshMaterial(const HdRTWorldScene& world, const HdRTMeshData& me
         *reason = mesh.materialId.GetString() + ": " + found->second->reason;
         return false;
     }
+    for (const auto& texture : found->second->textures) {
+        if (texture.enabled && texture.usesUV && (!mesh.uvReason.empty() ||
+            mesh.cornerUVs.size() != mesh.triangles.size()*3)) {
+            *reason = mesh.materialId.GetString() + ": " +
+                (mesh.uvReason.empty() ? "st UV data is unavailable" : mesh.uvReason);
+            return false;
+        }
+    }
     *material = found->second->parameters;
+    if (data) *data = found->second.get();
     return true;
 }
 
@@ -64,10 +75,11 @@ std::shared_ptr<const HdRTWorldScene> HdRTBuildScene(HdRTSceneSnapshot const& sn
     auto world = std::make_shared<HdRTWorldScene>();
     world->meshes = snapshot.meshes;
     world->materials = snapshot.materials;
+    world->domes = snapshot.domes;
     world->contentVersion = snapshot.contentVersion;
     for (const auto& entry : snapshot.lights) world->lights.push_back(entry.second);
     for (const auto& entry : snapshot.domes) {
-        if (entry.second.visible)
+        if (entry.second.visible && entry.second.supported && !entry.second.hasTexture)
             for (int k = 0; k < 3; ++k)
                 world->dome[k] += entry.second.radiance[k];
     }

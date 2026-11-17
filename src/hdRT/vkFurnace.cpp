@@ -113,15 +113,22 @@ struct MeshRow
     float albedo[4] = {};
     int32_t metadata[4] = {-1, 0, 0, 0};
     HdRTVkMaterial material;
+    uint64_t uvs = 0, padding = 0;
+    int32_t textureBindings[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
 };
-static_assert(sizeof(MeshRow) == 112, "MeshRow must match the shader");
+static_assert(sizeof(MeshRow) == 160, "MeshRow must match the shader");
+
+struct TextureRow { uint64_t pixels=0, cdf=0; uint32_t size[4]={}; };
+struct EnvironmentRow { float transform[16]; float radiance[4]; float info[4]; };
+struct TextureGpu { Buffer pixels, cdf; std::shared_ptr<const HdRTVkTexture> source; double integral[3]={}; };
 
 struct MeshGpu
 {
-    Buffer positions, normals, indices, faceIds;
+    Buffer positions, normals, indices, faceIds, uvs;
     Accel blas;
     uint64_t geometryVersion = 0, topologyVersion = 0;
     uint64_t normalVersion = 0;
+    uint64_t uvVersion = 0;
     size_t normalCount = 0;
     size_t vertexCount = 0, triangleCount = 0;
     uint32_t slot = 0;
@@ -149,7 +156,7 @@ struct FrameGpu
 {
     float invView[16];
     float invProj[16];
-    float dome[4];          // rgb dome radiance, a unused
+    float dome[4];          // rgb uniform dome radiance, a textured dome count
     uint32_t size[4];       // width, height, bounces, seed
     uint32_t pass[4];       // pass index, orthographic flag, unused, unused
 };
@@ -190,6 +197,11 @@ struct HdRTVkFurnace::Impl
     std::vector<MeshRow> rows;
     Buffer meshTable, instanceBuffer, stagingBuffer, scratchBuffer;
     Buffer lightTable, guideBuffer, guideReadback;
+    Buffer textureTable, bindingTable, environmentTable;
+    std::map<std::string, TextureGpu> textureCache;
+    std::vector<unsigned char> textureRows, bindingRows, environmentRows;
+    uint32_t environmentCount = 0;
+    uint32_t textureBindingCount = 0;
     std::vector<HdRTVkLight> lights;
     bool lightsReady = false;
     bool wantGuides = false, guidesValid = false;
@@ -656,7 +668,9 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
             f2.pNext = &v12;
             vkGetPhysicalDeviceFeatures2(candidate, &f2);
             rayQuery = rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && f2.features.shaderInt64
-                && f2.features.shaderSampledImageArrayDynamicIndexing;
+                && f2.features.shaderSampledImageArrayDynamicIndexing
+                && props.limits.maxPerStageDescriptorStorageBuffers >= 8
+                && props.limits.maxDescriptorSetStorageBuffers >= 8;
         }
         const int rank = (rayQuery ? 2 : 0) + (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 1 : 0);
         if (rank > bestRank)
@@ -759,6 +773,7 @@ void HdRTVkFurnace::Impl::DestroyMesh(MeshGpu& mesh)
     DestroyBuffer(mesh.normals);
     DestroyBuffer(mesh.indices);
     DestroyBuffer(mesh.faceIds);
+    DestroyBuffer(mesh.uvs);
 }
 
 void HdRTVkFurnace::Impl::DestroyScene()
@@ -856,7 +871,17 @@ bool HdRTVkFurnace::Impl::UpdateMesh(MeshGpu& mesh, const HdRTVkMesh& view,
             || !Upload(mesh.faceIds, ids, bytes, 0, error)) return false;
         stats.tableUploadBytes += bytes;
     }
+    if (view.cornerUVs && view.triangleCount && (topology || !mesh.uvs.buffer || mesh.uvVersion != view.uvVersion)) {
+        const VkDeviceSize bytes = VkDeviceSize(view.triangleCount)*6*sizeof(float);
+        if (!EnsureBuffer(bytes, shading, false, &mesh.uvs, error)
+            || !Upload(mesh.uvs, view.cornerUVs, bytes, 0, error)) return false;
+        stats.uvUploadBytes += bytes;
+    }
+    if (!view.cornerUVs) DestroyBuffer(mesh.uvs);
+    mesh.uvVersion = view.uvVersion;
     MeshRow& row = rows[mesh.slot];
+    row.uvs = mesh.uvs.buffer ? BufferAddress(mesh.uvs.buffer) : 0;
+    std::memcpy(row.textureBindings, view.textureBindings, sizeof(row.textureBindings));
     row.positions = mesh.positions.buffer ? BufferAddress(mesh.positions.buffer) : 0;
     row.normals = mesh.normals.buffer ? BufferAddress(mesh.normals.buffer) : 0;
     row.indices = mesh.indices.buffer ? BufferAddress(mesh.indices.buffer) : 0;
@@ -943,6 +968,11 @@ bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
             return _Fail(error, "mesh exceeds the Vulkan or shader indexing limits");
         if (view.vertexCount && view.triangleCount && (!view.positions || !view.normals || !view.indices))
             return _Fail(error, "nonempty mesh has a missing geometry array");
+        if (view.cornerUVs && view.triangleCount > size_t(UINT32_MAX)/6)
+            return _Fail(error,"UV array exceeds shader indexing limits");
+        for (int32_t binding:view.textureBindings)
+            if (binding < -1 || (binding>=0 && uint32_t(binding)>=textureBindingCount))
+                return _Fail(error,"mesh references an unavailable texture binding");
         const size_t normalCount = view.normalCount ? view.normalCount : view.vertexCount;
         const size_t requiredNormals = view.cornerNormals ? view.triangleCount * 3 : view.vertexCount;
         if (normalCount < requiredNormals || normalCount > size_t(UINT32_MAX) / 3)
@@ -1049,17 +1079,17 @@ bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
 
 bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error)
 {
-    VkDescriptorSetLayoutBinding bindings[8] = {};
-    for (uint32_t k = 0; k < 8; ++k)
+    VkDescriptorSetLayoutBinding bindings[11] = {};
+    for (uint32_t k = 0; k < 11; ++k)
     {
         bindings[k].binding = k;
-        bindings[k].descriptorType = k >= 6 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+        bindings[k].descriptorType = (k == 6 || k == 7) ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
             (k == 0) ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[k].descriptorCount = k >= 6 ? 8 : 1;
+        bindings[k].descriptorCount = (k == 6 || k == 7) ? 8 : 1;
         bindings[k].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dslci = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    dslci.bindingCount = 8;
+    dslci.bindingCount = 11;
     dslci.pBindings = bindings;
     HDRT_VK(vkCreateDescriptorSetLayout(device, &dslci, nullptr, &setLayout));
 
@@ -1085,7 +1115,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     HDRT_VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline));
 
     VkDescriptorPoolSize poolSizes[3] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
-        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16 } };
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 8 }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16 } };
     VkDescriptorPoolCreateInfo dpci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpci.maxSets = 1;
     dpci.poolSizeCount = 3;
@@ -1210,6 +1240,14 @@ void HdRTVkFurnace::Impl::Destroy()
         DestroyBuffer(readbackBuffer);
         DestroyBuffer(legacyReadbackBuffer);
         DestroyBuffer(lightTable);
+        DestroyBuffer(textureTable);
+        DestroyBuffer(bindingTable);
+        DestroyBuffer(environmentTable);
+        for (auto& entry : textureCache) { DestroyBuffer(entry.second.pixels); DestroyBuffer(entry.second.cdf); }
+        textureCache.clear();
+        textureRows.clear(); bindingRows.clear(); environmentRows.clear();
+        environmentCount = 0;
+        textureBindingCount = 0;
         DestroyBuffer(guideBuffer);
         DestroyBuffer(guideReadback);
         lights.clear();
@@ -1443,6 +1481,8 @@ bool HdRTVkFurnace::SetLights(const std::vector<HdRTVkLight>& input, std::string
     return true;
 }
 
+#include "vkTextureUpload.inl"
+
 bool HdRTVkFurnace::HasScene() const
 {
     return _impl->hasScene || !_impl->lights.empty();
@@ -1470,6 +1510,7 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
     const VkDeviceSize guideBytes = (frame.guides ? pixels : 1) * sizeof(HdRTVkGuide);
     if (guideBytes > d.maxStorageBufferRange) return _Fail(error, "guide image exceeds Vulkan storage limit");
     if (!d.lightTable.buffer && !SetLights({}, error)) return false;
+    if (!d.textureTable.buffer && !SetTextures({}, {}, {}, nullptr, error)) return false;
     if (!d.EnsureBuffer(guideBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                         false, &d.guideBuffer, error)) return false;
     VkDescriptorBufferInfo guideInfo = {d.guideBuffer.buffer, 0, guideBytes};
@@ -1499,7 +1540,7 @@ bool HdRTVkFurnace::BeginFrame(const HdRTVkFrame& frame, std::string* error)
     gpu.dome[0] = frame.dome[0];
     gpu.dome[1] = frame.dome[1];
     gpu.dome[2] = frame.dome[2];
-    gpu.dome[3] = 0.0f;
+    gpu.dome[3] = float(d.environmentCount);
     gpu.size[0] = frame.width;
     gpu.size[1] = frame.height;
     gpu.size[2] = frame.bounces;

@@ -8,6 +8,7 @@
 // pxr/imaging/plugin/hdEmbree/renderer.cpp. Only the structure is kept; see renderer.h and NOTICE.md.
 //
 #include "renderer.h"
+#include "sceneTextures.h"
 
 #include "aov.h"
 #include "log.h"
@@ -588,6 +589,25 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
         const auto s0 = std::chrono::steady_clock::now();
         static const HdRTWorldScene empty;
         const HdRTWorldScene& w = _scene ? *_scene : empty;
+        HdRTSceneTextures assets;
+        auto assetWait=[&]() {
+            if (renderThread->IsPauseRequested()) _AcknowledgePause();
+            return !renderThread->IsStopRequested() && !_Superseded();
+        };
+        if (!assets.Prepare(w,_images,assetWait)) return;
+        while (renderThread->IsPauseRequested() && assetWait())
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        if (!assetWait()) return;
+        HdRTVkEditStats textureEdits;
+        if (!_gpu.SetTextures(assets.images,assets.bindings,assets.environments,&textureEdits,&error)) {
+            _uploadedScene.reset(); _Fail(error); return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(_statsMutex);
+            _stats.textureDiagnostics=assets.diagnostics;
+            _stats.imageDecodes=_images.Decodes(); _stats.imageCacheHits=_images.CacheHits();
+        }
+        if (!assets.diagnostics.empty()) HdRTLog("WARNING: texture assets: %s",assets.diagnostics.c_str());
         std::vector<HdRTVkMesh> meshes;
         meshes.reserve(w.meshes.size());
         for (const auto& entry : w.meshes) {
@@ -597,6 +617,8 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
             mesh.geometryVersion = data.geometryVersion;
             mesh.topologyVersion = data.topologyVersion;
             mesh.normalVersion = data.normalVersion;
+            mesh.uvVersion = data.uvVersion;
+            mesh.cornerUVs = data.cornerUVs.empty() ? nullptr : reinterpret_cast<const float*>(data.cornerUVs.cdata());
             mesh.cornerNormals = !data.cornerNormals.empty();
             mesh.vertexCount = data.points.size();
             mesh.triangleCount = data.triangles.size();
@@ -617,7 +639,17 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
             }
             mesh.visible = data.visible;
             std::string materialReason;
-            mesh.useOpenPbr = HdRTResolveMeshMaterial(w, data, &mesh.material, &materialReason);
+            const HdRTMaterialData* resolvedMaterial=nullptr;
+            mesh.useOpenPbr = HdRTResolveMeshMaterial(w, data, &mesh.material, &materialReason,&resolvedMaterial);
+            if (mesh.useOpenPbr) {
+                const auto failure=assets.materialErrors.find(resolvedMaterial);
+                if (failure!=assets.materialErrors.end()) { mesh.useOpenPbr=false; materialReason=failure->second; }
+                else {
+                    const auto bound=assets.materialBindings.find(resolvedMaterial);
+                    if (bound!=assets.materialBindings.end())
+                        std::copy_n(bound->second.data(),8,mesh.textureBindings);
+                }
+            }
             if (!materialReason.empty()) {
                 std::string previousReason;
                 if (_uploadedScene) {
@@ -652,6 +684,10 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
             _unpresentedEdits.tlasUpdates += edits.tlasUpdates;
             _unpresentedEdits.geometryUploadBytes += edits.geometryUploadBytes;
             _unpresentedEdits.tableUploadBytes += edits.tableUploadBytes;
+            _unpresentedEdits.tableUploadBytes += textureEdits.tableUploadBytes;
+            _unpresentedEdits.uvUploadBytes += edits.uvUploadBytes;
+            _unpresentedEdits.textureUploadBytes += textureEdits.textureUploadBytes;
+            _unpresentedEdits.textureCacheHits += textureEdits.textureCacheHits;
             _stats.edits = _unpresentedEdits;
             _stats.sceneMemory = "geometry=device_local;index=device_local;normal=device_local;table=device_local;staging=host_visible;readback=host_visible";
         }

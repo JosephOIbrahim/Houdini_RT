@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "scope": "Actual H22.0.429 USD to Hydra texture/UV ingress and FLOAT raw albedo/beauty output; supplementary, no Karma parity claim",
+  "resolution": [48, 48],
+  "samples": 128,
+  "seed": 101,
+  "bounces": 1,
+  "guide_max_abs": 0.00004,
+  "paired_constant_max_abs": 0.00001,
+  "each_slot_control_min_difference_from_baseline": 0.00001,
+  "requirements": [
+    "Full-frame pixel-center albedo compared with independent geometry/UV/sampling equations; no mask or fit",
+    "Every delivered beauty and albedo channel is FLOAT32, finite and exact raster size",
+    "Every case publishes a completed native frame with Vulkan validation active and no validation errors",
+    "Seven 1x1 texture slots match otherwise identical constant OpenPBR controls with the same seed; every control differs from baseline under a finite glossy light",
+    "Fallback cases produce declared matte displayColor and path-specific native diagnostics",
+    "All fixtures, source scripts, encoded assets and expected values are frozen before rendering",
+    "Payload and source hashes match the passed sealed s5 receipt before and after all renders"
+  ]
+}

@@ -252,3 +252,32 @@
   flipbook/husk equivalence evidence and explicitly exclude raw-AOV parity from
   claims about viewport captures. The diagnostic alpha-over relation is evidence,
   not proof of the private host compositor's implementation or an image correction.
+
+## 2026-11-17 — native UVs, image textures and HDRI lighting
+
+- Keep scene authoring in native MaterialX/OpenPBR and Dome Light nodes. The
+  integrated panel controls renderer ownership and reports the supported subset;
+  it does not create another material or lighting interface.
+- Image asset metadata belongs to Hydra Sync, decoding to a bounded CPU worker,
+  and Vulkan resources to the render thread. Capture the OCIO configuration with
+  each decode request so configuration changes cannot corrupt cached identities.
+- Preserve indexed UV seams in independent triangle-corner buffers. Shading-only
+  edits must not force geometry uploads or acceleration-structure work.
+- Use explicit level-zero image sampling and disclose the absence of mip
+  footprints/cubic filtering. A non-power-of-two regression exposed negative
+  integer remainder in GLSL: use unsigned, nonnegative operands for wrapping.
+  The [GLSL 4.60 operator specification](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.60.html)
+  leaves negative integer `%` undefined.
+- Use exact-cell solid-angle HDRI importance distributions, mixed with five
+  percent uniform sampling, and evaluate the full multiple-dome mixture PDF.
+  Keep the existing camera-background transparency contract and legacy random
+  streams when no textured dome is active.
+- The default Houdini 22.0.429 OCIO optimized sRGB processor returns 1.00002408
+  for white. A 3e-5 endpoint allowance applies only after a nonidentity color
+  transform, followed by a domain-boundary snap. Raw/data values remain strict.
+- USD asset `Get()` and `GetMetadata("default")` can invoke resolution. The
+  bounded UI support scan reads raw Sdf opinions and reports asset validity as
+  unassessed; renderer warnings/statistics own actual decode diagnostics.
+- Reference snapshots are older than the installed SDK. Verify native node IDs,
+  exported shader metadata, Place2D versus UsdTransform2d formulas, DomeLight_1
+  pole offsets and OCIO roles against the exact installed Houdini build.

@@ -5,12 +5,13 @@ import struct
 
 
 MODEL = "openpbr-opaque-constants-v1"
+TEXTURE_MODEL = "openpbr-opaque-textures-v1"
 
 
 def validate_policy(policy):
     if not policy:
         return {}
-    if not isinstance(policy, dict) or policy.get("model") != MODEL:
+    if not isinstance(policy, dict) or policy.get("model") not in {MODEL, TEXTURE_MODEL}:
         raise ValueError("Unsupported installed material capability policy.")
     if policy.get("surface_shader") != "ND_open_pbr_surface_surfaceshader":
         raise ValueError("Invalid material surface shader policy.")
@@ -34,8 +35,12 @@ def validate_policy(policy):
         raise ValueError("Missing explicit geometry-input restrictions.")
     if policy.get("neutral_displacement") != {"shader": "ND_displacement_float", "displacement": 0, "scale_default": 1}:
         raise ValueError("Invalid neutral displacement policy.")
-    if policy.get("connections") != "unsupported" or policy.get("material_subsets") != "unsupported":
+    expected_connections = "bounded_images" if policy.get("model") == TEXTURE_MODEL else "unsupported"
+    if policy.get("connections") != expected_connections or policy.get("material_subsets") != "unsupported":
         raise ValueError("Unsupported material graph or subset policy.")
+    if expected_connections == "bounded_images":
+        from .texture_support import validate_texture_policy
+        validate_texture_policy(policy.get("textures"))
     return policy
 
 
@@ -71,6 +76,7 @@ class MaterialInspector:
     def __init__(self, shade, policy, time_code):
         self.shade, self.policy, self.time = shade, policy, time_code
         self.cache = {}
+        self.texture_coordinates = {}
 
     def _issue(self, attr, reason, kind="Unsupported"):
         return MaterialIssue(str(attr.GetPath()), reason, kind)
@@ -81,7 +87,7 @@ class MaterialInspector:
         if len(attr.GetConnections()) == 1 and source and source[2] == self.shade.AttributeType.Input:
             return self._issue(attr, "Connected interface inputs may be flattened to constants by Hydra; "
                                "the effective value and fallback were not assessed.", "Not assessed")
-        label = "displacement" if displacement else "shader inputs, including textures"
+        label = "displacement" if displacement else "shader inputs outside the declared graph profile"
         return self._issue(attr, "Connected " + label + " are unsupported.")
 
     def _source(self, material, terminal):
@@ -96,7 +102,12 @@ class MaterialInspector:
     def inspect(self, material):
         path = str(material.GetPath())
         if path not in self.cache:
-            self.cache[path] = tuple(self._inspect(material))
+            textures = None
+            if self.policy.get("textures"):
+                from .texture_support import TextureInspector
+                textures = TextureInspector(self.shade, self.time, self.policy["textures"])
+            self.cache[path] = tuple(self._inspect(material, textures))
+            self.texture_coordinates[path] = bool(textures and textures.uses_st)
         return self.cache[path]
 
     def _output(self, material, terminal):
@@ -106,7 +117,7 @@ class MaterialInspector:
                 return output.GetAttr()
         return None
 
-    def _inspect(self, material):
+    def _inspect(self, material, textures=None):
         for terminal in ("Surface", "Displacement", "Volume"):
             output = self._output(material, terminal)
             if output and len(output.GetConnections()) != 1:
@@ -135,7 +146,12 @@ class MaterialInspector:
             if attr.GetColorSpace():
                 yield self._issue(attr, "Explicit colorSpace tags are unsupported; use untagged scene-linear constants.")
             if attr.GetConnections():
-                yield self._connection(item)
+                source = item.GetConnectedSource()
+                if textures and name in self.policy["parameters"] and not (
+                        source and source[2] == self.shade.AttributeType.Input):
+                    yield from textures.inspect(item, self.policy["parameters"][name])
+                else:
+                    yield self._connection(item)
                 continue
             value = attr.Get(self.time)
             if value is None:

@@ -31,7 +31,7 @@ void writeGuide(uvec2 pixel, uint index) {
         value.eyeNormalDistance=vec4(normalize(mat3(view)*ns),distance);
         value.ids.w=1;
         if (!emitter) {
-            MeshGpu data=meshes.rows[mesh];
+            MeshGpu data=texturedMaterial(meshes.rows[mesh],prim,bary);
             value.ids.x=data.metadata.x;
             value.ids.y=int(IndexArray(data.faceIds).v[prim]);
             value.albedo=vec4(data.metadata.z != 0 ? data.baseColorWeight.rgb*data.baseColorWeight.a : data.albedo.rgb,1);

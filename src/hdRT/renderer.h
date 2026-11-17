@@ -27,6 +27,7 @@
 #include "settings.h"
 #include "vkFurnace.h"
 #include "world.h"
+#include "imageAssets.h"
 
 #include <atomic>
 #include <chrono>
@@ -83,6 +84,8 @@ struct HdRTRenderStats
     double pauseLatencyMilliseconds = 0.0;
     double pauseRequestedSeconds = 0.0, pauseAcknowledgedSeconds = 0.0; ///< monotonic clock
     std::string sceneMemory;
+    std::string textureDiagnostics;
+    uint64_t imageDecodes=0, imageCacheHits=0;
 };
 
 class HdRTRenderer final
@@ -139,6 +142,7 @@ private:
     std::shared_ptr<const HdRTWorldScene> _scene;           // active render-thread snapshot
     std::shared_ptr<const HdRTWorldScene> _uploadedScene;   // what the GPU holds; render thread only
     HdRTVkEditStats _unpresentedEdits; // work survives cancelled requests until an image is published
+    HdRTImageAssets _images;
 
     GfMatrix4d _viewMatrix;
     GfMatrix4d _projMatrix;

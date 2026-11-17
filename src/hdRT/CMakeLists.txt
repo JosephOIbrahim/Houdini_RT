@@ -41,7 +41,7 @@ foreach(kernel IN ITEMS furnace resolve)
         OUTPUT "${shader_spv}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
         COMMAND "${HRT_GLSLANG}" -V --target-env vulkan1.2 -S comp "${shader_src}" -o "${shader_spv}"
-        DEPENDS "${shader_src}" shaders/lighting.glsl shaders/guides.glsl shaders/material.glsl ${HRT_BSDF_HEADERS}
+        DEPENDS "${shader_src}" shaders/lighting.glsl shaders/guides.glsl shaders/material.glsl shaders/textures.glsl shaders/environment.glsl ${HRT_BSDF_HEADERS}
         COMMENT "glslangValidator ${kernel}.comp"
         VERBATIM)
     list(APPEND HRT_SHADER_OUTPUTS "${shader_spv}")
@@ -57,12 +57,21 @@ add_library(hdRT SHARED
     settings.cpp
     mesh.cpp
     meshNormals.cpp
+    meshUV.cpp
     material.cpp
+    materialTexture.cpp
+    imageAssets.cpp
+    sceneTextures.cpp
     light.cpp
     world.cpp
     vkFurnace.cpp)
 add_dependencies(hdRT hdRT_shaders)
 target_link_libraries(hdRT PRIVATE Houdini HoudiniThirdParty)
+get_filename_component(HRT_HDK_ROOT "${Houdini_DIR}/../.." ABSOLUTE)
+find_library(HRT_OIIO OpenImageIO_sidefx HINTS "${HRT_HDK_ROOT}/custom/houdini/dsolib" REQUIRED)
+find_library(HRT_OIIO_UTIL OpenImageIO_Util_sidefx HINTS "${HRT_HDK_ROOT}/custom/houdini/dsolib" REQUIRED)
+find_library(HRT_OCIO OpenColorIO_sidefx HINTS "${HRT_HDK_ROOT}/custom/houdini/dsolib" REQUIRED)
+target_link_libraries(hdRT PRIVATE ${HRT_OIIO} ${HRT_OIIO_UTIL} ${HRT_OCIO})
 # MFB_* name this library to USD's registry and to PLUG_THIS_PLUGIN; they must match "Name" in plugInfo.json.
 target_compile_definitions(hdRT PRIVATE
     MFB_PACKAGE_NAME=hdRT

@@ -1,0 +1,6 @@
+# Preserve the exact bytes of frozen references, judges and native fixture exports.
+* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# These pre-image frozen helpers retain their original trailing blank lines.
+installed/launch.ps1 whitespace=blank-at-eol,-blank-at-eof,space-before-tab,cr-at-eol
+installed/live_workflow_base.py whitespace=blank-at-eol,-blank-at-eof,space-before-tab,cr-at-eol
+installed/native_evidence.py whitespace=blank-at-eol,-blank-at-eof,space-before-tab,cr-at-eol

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "scope": "Independent installed native texture/UV/HDRI workflow and exact-stage fresh normal-Houdini image correspondence; physical sampling/lighting and codec/color acceptance are independently established by CPU/GPU/raw-USD proofs.",
+  "sample_budget": 256,
+  "seed": 101,
+  "bounces": 4,
+  "capture_names": [
+    "baseline",
+    "uv_transform",
+    "roughness_map",
+    "image_swap",
+    "hdri_rotation",
+    "hdri_exposure",
+    "hdri_swap",
+    "missing_image",
+    "restored"
+  ],
+  "replay_relative_rgb_rmse_max": 0.01,
+  "replay_channel_mean_relative_max": 0.005,
+  "replay_channel_mean_absolute_floor": 0.0005,
+  "replay_alpha_max_abs": 1e-06,
+  "material_numeric_max_abs": 2e-06,
+  "restored_image_max_abs": 5e-05,
+  "paused_seconds_min": 8,
+  "camera_edit_count": 4,
+  "reference": "Exact immutable exported USD, assets, native OCIO config, installed payload and effective samples, one fresh normal Houdini process/delegate per stage using the same native flipbook pipeline. No raw-husk edge-equivalence claim, spatial alignment, masks, exposure fitting, or candidate-derived physical oracle.",
+  "native_events": "Independently parse ordered raw request/present/batch/pause/resume events by renderer session; selected records must bind back to exact raw event identity. No work is permitted after active pause ACK until resume; edited material must publish a later scene and generation.",
+  "support": "Assets honestly Not assessed by the graph report. Missing-file fallback/recovery must be independently present in native logs and full images. Native Image/Dome controls, report staleness, targeted viewer, pause/resume and restoration are checked."
+}

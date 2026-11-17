@@ -11,6 +11,7 @@ from pathlib import Path
 import threading
 import time
 from .material_support import MaterialInspector, validate_policy
+from .texture_support import authored_asset
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class CapabilityProfile:
     build_id: str = ""
     limitations: tuple = ()
     materials: dict = field(default_factory=dict)
+    environments: dict = field(default_factory=dict)
 
 
 def load_profile(environ=None, registry=None):
@@ -70,10 +72,15 @@ def load_profile(environ=None, registry=None):
             if not isinstance(policy, dict):
                 raise ValueError("Invalid installed material capability policy.")
             validate_policy(policy)
+            environments = data.get("environment_support", {})
+            if environments and environments != {"schemas": ["DomeLight", "DomeLight_1"],
+                    "formats": ["latlong", "automatic"], "automatic_requires_2_to_1": True,
+                    "max_textured_domes": 8, "camera_background": "transparent"}:
+                raise ValueError("Unsupported environment capability policy.")
             return CapabilityProfile(str(path.resolve()), version,
                                      frozenset(data["supported_lights"]),
                                      frozenset(data["supported_aovs"]), str(data.get("build_id", "")),
-                                     tuple(limitations), policy)
+                                     tuple(limitations), policy, environments)
     raise ValueError("Installed HoudiniRT capability profile was not found. Check the integrated installation.")
 
 
@@ -110,12 +117,15 @@ class SupportReport:
             lines += ["Capability profile: " + profile.version, profile.path,
                       "Profile build: " + (profile.build_id or "not specified"),
                       "Outputs supported by profile: " + ", ".join(sorted(profile.aovs)),
-                      ("Shading: opaque isotropic OpenPBR constants; unsupported materials use matte displayColor Lambert."
+                      ("Shading: opaque isotropic OpenPBR within the installed graph profile; unsupported materials use matte displayColor Lambert."
                        if profile.materials else "Shading: matte displayColor; material graphs are not evaluated.")]
             if profile.materials:
                 lines.append("Inspected material assignments: %d; within the profile: %d."
                              % (self.material_bindings, self.supported_material_bindings))
                 lines.append("Edit materials through Material Library / OpenPBR Surface and Assign Material.")
+                if profile.materials.get("textures"):
+                    lines.append("Edit textures with native MaterialX Image and UV nodes; edit HDRI through Dome Light.")
+                    lines.append("Asset files are not opened by this report; image availability and decoding remain unassessed.")
             lines.extend("Profile limitation: " + item for item in profile.limitations)
         if self.detail:
             lines.append(self.detail)
@@ -143,6 +153,7 @@ class SceneSupportScan:
         self._stage = self._iterator = self._notice = None
         self._materials = None
         self._supported_meshes, self._subset_meshes = set(), set()
+        self._textured_domes = 0
         self._changed = False
         self._seen = set()
         self._max_prims, self._max_findings = max_prims, max_findings
@@ -273,7 +284,7 @@ class SceneSupportScan:
             self._add(prim, typename, "This geometry type is not supported by the mesh renderer.")
         elif typename.split("_")[0] in {"Cube", "Sphere", "Cone", "Cylinder", "Capsule", "Plane"}:
             self._add(prim, typename, "USD imaging may convert this primitive to a mesh; this conversion has not been verified.", "Not assessed")
-        if typename.endswith("Light") or any("LightAPI" in str(s) for s in prim.GetAppliedSchemas()):
+        if typename.split("_")[0].endswith("Light") or any("LightAPI" in str(s) for s in prim.GetAppliedSchemas()):
             self._light(prim, typename)
         if typename == "RenderVar":
             source = str(self._value(prim, "sourceName", ""))
@@ -294,15 +305,27 @@ class SceneSupportScan:
         issues = self._materials.inspect(material)
         for issue in issues:
             if issue.kind == "Not assessed":
-                self._add(prim, "Material interface", "%s — %s Bound material: %s."
+                self._add(prim, "Material assessment", "%s — %s Bound material: %s."
                           % (issue.path, issue.reason, material.GetPath()), issue.kind)
             else:
                 self._add(prim, "Material fallback", "%s — %s. Bound material %s uses whole-mesh matte displayColor Lambert."
                           % (issue.path, issue.reason, material.GetPath()))
         path = str(prim.GetPath())
+        if self._materials.texture_coordinates.get(str(material.GetPath())):
+            self._texture_coordinates(prim)
         if not issues and path not in self._subset_meshes:
             self._supported_meshes.add(path)
         self.report.supported_material_bindings = len(self._supported_meshes)
+
+    def _texture_coordinates(self, prim):
+        st = self._geom.PrimvarsAPI(prim).FindPrimvarWithInheritance("st")
+        if not st or not st.GetAttr().HasAuthoredValueOpinion():
+            self._add(prim, "Texture coordinates", "The bound image graph requires primvars:st, but no authored st was found.")
+            return
+        if st.GetInterpolation() not in {"constant", "uniform", "vertex", "varying", "faceVarying"}:
+            self._add(prim, "Texture coordinates", "Unsupported st interpolation: " + str(st.GetInterpolation()))
+        self._add(prim, "Texture coordinate data", "st element counts, indices and finite values are checked by the native translator, "
+                  "not by this bounded stage inspection.", "Not assessed")
 
     def _subset_material(self, prim):
         # Each subset consumes its own outer traversal item/time budget.
@@ -351,7 +374,8 @@ class SceneSupportScan:
         return bool(getattr(value, "path", value))
 
     def _light(self, prim, typename):
-        token = typename[:1].lower() + typename[1:]
+        normalized = "DomeLight" if typename == "DomeLight_1" else typename
+        token = normalized[:1].lower() + normalized[1:]
         if token not in self.report.profile.lights:
             self._add(prim, typename or "Light API", "This light type is not in the renderer capability profile.")
         elif typename in {"RectLight", "DiskLight", "SphereLight"}:
@@ -365,9 +389,14 @@ class SceneSupportScan:
                               "OpenPBR requires light diffuse and specular controls at 1. "
                               "The diffuse factor scales both lobes; the specular factor is ignored.", "Limitation")
         for name in ("inputs:texture:file", "inputs:shaping:ies:file"):
-            value = self._value(prim, name, "")
+            value, deferred = authored_asset(prim.GetAttribute(name), self._time)
+            if deferred:
+                self._add(prim, name, deferred, "Not assessed")
             if self._asset_nonempty(value):
-                self._add(prim, name, "Light textures and IES profiles are not sampled.")
+                if name == "inputs:texture:file" and normalized == "DomeLight" and self.report.profile.environments:
+                    self._environment(prim, value)
+                else:
+                    self._add(prim, name, "Finite-light textures and IES profiles are not sampled.")
         defaults = {"inputs:shaping:focus": 0.0, "inputs:shaping:cone:angle": 90.0,
                     "inputs:shaping:cone:softness": 0.0,
                     "inputs:shaping:focusTint": (0.0, 0.0, 0.0)}
@@ -408,3 +437,32 @@ class SceneSupportScan:
                         for i, j in ((0, 1), (0, 2), (1, 2)))
             if not all(math.isfinite(x) and x > 0 for x in lengths) or shear or max(lengths) - min(lengths) > largest * 1e-6:
                 self._add(prim, "Sphere transform", "Nonuniform, sheared or singular sphere-light scaling is unsupported.")
+
+    def _environment(self, prim, value):
+        policy = self.report.profile.environments
+        matrix = self._geom.Xformable(prim).ComputeLocalToWorldTransform(self._time)
+        axes = [[float(matrix[row][col]) for col in range(3)] for row in range(3)]
+        lengths = [math.sqrt(sum(v * v for v in axis)) for axis in axes]
+        scale = lengths[0]
+        valid = all(math.isfinite(float(matrix[r][c])) for r in range(4) for c in range(4))
+        valid = valid and all(matrix[r][3] == 0 for r in range(3)) and matrix[3][3] == 1
+        valid = valid and math.isfinite(scale) and scale > 1e-15
+        valid = valid and all(math.isfinite(v) and abs(v - scale) <= 1e-6 * scale for v in lengths)
+        if valid:
+            unit = [[v / scale for v in axis] for axis in axes]
+            valid = all(abs(sum(unit[i][k] * unit[j][k] for k in range(3))) <= 1e-6
+                        for i, j in ((0, 1), (0, 2), (1, 2)))
+        if not valid:
+            self._add(prim, "HDRI transform", "Dome transforms require finite uniform scale without shear or singular axes.")
+        self._textured_domes += 1
+        if self._textured_domes > policy["max_textured_domes"]:
+            self._add(prim, "HDRI count", "The scene exceeds the profile limit of eight textured domes.")
+        format = str(self._value(prim, "inputs:texture:format", "automatic"))
+        if format not in policy["formats"]:
+            self._add(prim, "HDRI projection", "Only latitude-longitude environment maps are supported; got " + format)
+        pole = str(self._value(prim, "poleAxis", "scene"))
+        if pole not in {"scene", "Y", "Z"}:
+            self._add(prim, "HDRI pole axis", "Unknown pole-axis value: " + pole)
+        self._add(prim, "HDRI asset", "%s; availability, decoding, color processing and image dimensions are not checked here. "
+                  "Automatic projection requires a 2:1 image. Consult native renderer diagnostics."
+                  % getattr(value, "path", value), "Not assessed")

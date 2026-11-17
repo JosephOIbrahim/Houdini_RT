@@ -1,5 +1,49 @@
 # Progress
 
+## 2026-11-17 — native UVs, textures and HDRI lighting (Phase 4B)
+
+- One artist workflow continues through native Material Library/OpenPBR/Assign
+  Material, Image/Texcoord/Place2D/USD Transform2D and Dome Light nodes. The same
+  integrated HoudiniRT viewer controller provides Enable, Pause/Resume and Off.
+- Indexed `st` across interpolation domains feeds independent corner UV buffers.
+  Seven opaque OpenPBR inputs accept bounded color/scalar image graphs, four
+  address modes and closest/bilinear level-zero filtering. Native OIIO decodes
+  PNG/JPEG/EXR/HDR; native OCIO converts colors to the current scene-linear role.
+- Up to eight latlong HDRIs honor native pole axes, transforms, exposure and tint.
+  Solid-angle/luminance distributions and a 5% uniform support mixture drive
+  environment NEE/escape MIS. Camera misses remain transparent.
+- CPU decoding is asynchronous and revision/configuration/domain cached. Pending
+  decodes survive cancellation; GPU work and resource lifetime stay on the render
+  thread. UV/image/material/dome changes preserve acceleration structures.
+- The bounded support report marks file availability/decoding Not assessed;
+  native diagnostics own actual asset errors. Invalid materials use whole-mesh
+  displayColor fallback; invalid domes are excluded. Limits and unsupported
+  graphs/UDIMs/mips/normal maps are explicit in the capability profile.
+- Unchanged sealed s5/s4 PASS, nonce `18411768476708441281`: all 22 live/fresh
+  comparisons exact and Karma FLIP p99 0.0229. GPU texture/PDF, 109-case material,
+  40-case CPU asset, native ingress and textured HDRI furnace probes pass.
+  Actual USD evidence covers 119 FLOAT outputs; seven texture-vs-constant pairs
+  match exactly, independent albedo maximum error 1.33899e-5 < 4e-5.
+- Extension checks: Python 3.12 498 passed/19 skipped, Python 3.14 515 passed/2
+  skipped, actual H22 USD/HOM 34 passed. Vulkan validation remains silent.
+- Installed `textures-hdri-h22.0.429-d23eb03a049f`, extension 0.5.0: 112 payload
+  files, 199 source inputs, eight proof receipts and 15 registrations audited.
+  Previous payload and exact package bytes remain available for rollback.
+- Regular Houdini 22.0.429 native edits, active pause, latest paused-edit resume,
+  panel recreation, intended-viewer isolation and prior paused Karma/grid
+  restoration pass. Pause acknowledged at 1343/65536 samples in 19.281 ms, with
+  8.00543 seconds of confirmed no-work hold. Four camera edits measured
+  114.893/123.272 ms p50/p95 by independent publication observation.
+- All nine live captures match fresh regular-Houdini process/delegate references
+  exactly in full RGBA. Every texture/HDRI edit changes pixels; restoring the
+  native parameters reproduces the baseline exactly. Independent image, native
+  journal and fresh-process provenance judges pass; all owned processes exited.
+- First installed activation exceeded the image deadline during approximately
+  31.8 seconds of backend initialization; exact cause remains unisolated. An
+  unchanged warm repeat published in 135.610 ms. Failed startup/observation runs
+  remain preserved; warm startup is not a universal latency guarantee.
+- Evidence, reproduction and bounds: `docs/textures-hdri-verification-2026-11-17.md`.
+
 ## 2026-11-17 — bounded native OpenPBR materials (Phase 4A)
 
 - Native Solaris Material Library/OpenPBR/Assign Material nodes drive seven

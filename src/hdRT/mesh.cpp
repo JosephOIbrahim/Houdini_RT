@@ -106,6 +106,7 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
     bool transformDirty = first;
     bool normalSourceChanged = first;
     bool normalsDirty = first;
+    bool uvSourceChanged = first, uvDirty = first;
     bool changed = first;
 
     // Instanced rprims (point instancers, native instancing) are not expanded yet: say so once.
@@ -194,6 +195,11 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
             normalSourceChanged = true;
         }
     }
+    if (first || HdChangeTracker::IsPrimvarDirty(*dirtyBits,id,TfToken("st")) ||
+        HdChangeTracker::IsPrimvarDirty(*dirtyBits,id,TfToken("primvars:st"))) {
+        const HdRTUVSource source = HdRTReadUV(sceneDelegate,id);
+        if (!(source == _uvSource)) { _uvSource = source; uvSourceChanged = true; }
+    }
     const int primId = GetPrimId();
     changed = changed || first || _published->primId != primId;
 
@@ -255,6 +261,18 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
         normalsDirty = first || smooth != _published->normals || _cornerNormals != _published->cornerNormals;
         changed = changed || normalsDirty;
     }
+    if (geometryDirty || uvSourceChanged) {
+        VtVec2fArray corners;
+        std::string error = "mesh geometry is invalid";
+        if (_geometryValid)
+            HdRTBuildCornerUV(_uvSource,_topology,_triangles,_faceIds,_points.size(),id,&corners,&error);
+        if (_uvSource.present && !error.empty() && error != _uvReason)
+            HdRTLog("WARNING: mesh %s texture coordinates: %s; UV-dependent materials use displayColor fallback",
+                    id.GetText(),error.c_str());
+        uvDirty = first || corners != _published->cornerUVs || error != _published->uvReason;
+        _cornerUVs = std::move(corners); _uvReason = std::move(error);
+        changed = changed || uvDirty;
+    }
     if (!changed) {
         *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
         return;
@@ -277,6 +295,10 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
         data->normals = _geometryValid ? _normals : VtVec3fArray();
         data->cornerNormals = _cornerNormals;
         data->normalVersion = HdRTNextMeshVersion();
+    }
+    if (uvDirty) {
+        data->cornerUVs = _cornerUVs; data->uvReason = _uvReason;
+        data->uvVersion = HdRTNextMeshVersion();
     }
     data->primId = primId;
     data->transform = _transform;

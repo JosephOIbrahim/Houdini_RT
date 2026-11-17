@@ -17,10 +17,87 @@
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/usd/usdLux/blackbody.h"
+#include "pxr/usd/sdf/assetPath.h"
 
 #include <cmath>
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+namespace {
+bool DomeColorSpace(const VtValue& resource, std::string* output)
+{
+    const std::map<TfToken,VtValue>* parameters = nullptr;
+    if (resource.IsHolding<HdMaterialNetworkMap>()) {
+        const auto& network = resource.UncheckedGet<HdMaterialNetworkMap>();
+        const auto terminal = network.map.find(TfToken("light"));
+        if (terminal != network.map.end() && !terminal->second.nodes.empty())
+            parameters = &terminal->second.nodes.back().parameters;
+    } else if (resource.IsHolding<HdMaterialNetwork2>()) {
+        const auto& network = resource.UncheckedGet<HdMaterialNetwork2>();
+        const auto terminal = network.terminals.find(TfToken("light"));
+        if (terminal != network.terminals.end()) {
+            const auto node = network.nodes.find(terminal->second.upstreamNode);
+            if (node != network.nodes.end()) parameters = &node->second.parameters;
+        }
+    }
+    if (!parameters) return true;
+    const auto value = parameters->find(TfToken("colorSpace:texture:file"));
+    if (value == parameters->end()) return true;
+    if (value->second.IsHolding<TfToken>()) *output = value->second.UncheckedGet<TfToken>().GetString();
+    else if (value->second.IsHolding<std::string>()) *output = value->second.UncheckedGet<std::string>();
+    else return false;
+    return true;
+}
+void ReadDomeTexture(HdSceneDelegate* delegate, const SdfPath& id, HdRTDomeData* dome)
+{
+    const auto assetValue = delegate->GetLightParamValue(id,HdLightTokens->textureFile);
+    if (assetValue.IsEmpty()) return;
+    auto fail = [&](const char* error) { dome->supported = false; dome->reason = error; };
+    if (!assetValue.IsHolding<SdfAssetPath>()) {
+        dome->hasTexture = true; fail("dome texture:file must be a USD asset path"); return;
+    }
+    const auto& asset = assetValue.UncheckedGet<SdfAssetPath>();
+    dome->authoredPath = asset.GetAuthoredPath(); dome->resolvedPath = asset.GetResolvedPath();
+    dome->hasTexture = !asset.GetAssetPath().empty();
+    if (!dome->hasTexture) return;
+    if (!DomeColorSpace(delegate->GetMaterialResource(id),&dome->colorSpace)) {
+        fail("dome file colorSpace must be a token or string"); return;
+    }
+    const auto format = delegate->GetLightParamValue(id,HdLightTokens->textureFormat);
+    if (format.IsHolding<TfToken>()) dome->textureFormat = format.UncheckedGet<TfToken>().GetString();
+    else if (format.IsHolding<std::string>()) dome->textureFormat = format.UncheckedGet<std::string>();
+    else if (!format.IsEmpty()) { fail("dome texture:format must be a token"); return; }
+    if (dome->textureFormat != "latlong" && dome->textureFormat != "automatic") {
+        fail("only latlong or automatic 2:1 dome textures are supported"); return;
+    }
+    const auto offsetValue = delegate->GetLightParamValue(id,HdLightTokens->domeOffset);
+    if (!offsetValue.IsEmpty() && !offsetValue.IsHolding<GfMatrix4d>()) {
+        fail("dome pole-axis offset must be a matrix4d"); return;
+    }
+    // Gf uses row vectors: the pole-axis correction precedes authored placement.
+    const GfMatrix4d matrix = offsetValue.GetWithDefault(GfMatrix4d(1)) * delegate->GetTransform(id);
+    for (int r=0;r<4;++r) for (int c=0;c<4;++c)
+        if (!std::isfinite(matrix[r][c])) { fail("dome transform must be finite"); return; }
+    if (matrix[0][3] != 0 || matrix[1][3] != 0 || matrix[2][3] != 0 || matrix[3][3] != 1) {
+        fail("dome transform must be affine"); return;
+    }
+    GfVec3d axes[3] = {matrix.TransformDir(GfVec3d(1,0,0)),
+                      matrix.TransformDir(GfVec3d(0,1,0)), matrix.TransformDir(GfVec3d(0,0,1))};
+    const double scale = axes[0].GetLength();
+    if (!std::isfinite(scale) || scale <= 1e-15) { fail("dome transform is singular"); return; }
+    for (int i=0;i<3;++i) {
+        if (std::abs(axes[i].GetLength()-scale) > 1e-6*scale) {
+            fail("dome transform has nonuniform scale"); return;
+        }
+        axes[i] /= scale;
+    }
+    if (std::abs(GfDot(axes[0],axes[1])) > 1e-6 || std::abs(GfDot(axes[0],axes[2])) > 1e-6 ||
+        std::abs(GfDot(axes[1],axes[2])) > 1e-6) { fail("dome transform has shear"); return; }
+    GfMatrix4d rotation(1);
+    for (int r=0;r<3;++r) for (int c=0;c<3;++c) rotation[r][c] = axes[r][c];
+    dome->worldToDome = rotation.GetInverse();
+}
+} // namespace
 
 HdRTLight::HdRTLight(SdfPath const& id, TfToken const& type)
     : HdLight(id), _type(type)
@@ -76,6 +153,10 @@ HdRTLight::Sync(HdSceneDelegate *sceneDelegate,
                id.GetText(), intensity, exposure, color[0], color[1], color[2],
                dome.radiance[0], dome.radiance[1], dome.radiance[2], int(dome.visible));
     if (_type == HdPrimTypeTokens->domeLight) {
+        ReadDomeTexture(sceneDelegate,id,&dome);
+        if (!dome.supported && dome.reason != _domeWarning)
+            HdRTLog("WARNING: dome %s: %s; this dome contributes no illumination",id.GetText(),dome.reason.c_str());
+        _domeWarning = dome.reason;
         dome.radiance *= diffuse;
         bool valid = true;
         for (int k=0; k<3; ++k) valid = valid && std::isfinite(dome.radiance[k]) && dome.radiance[k] >= 0;

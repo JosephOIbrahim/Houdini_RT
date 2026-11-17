@@ -29,3 +29,12 @@ def test_malformed_or_unknown_material_profiles_fail_closed(field, value):
 @pytest.mark.parametrize("value", [True, float("nan"), float("inf"), 1e100, "0.5"])
 def test_scalar_validation_rejects_native_unrepresentable_values(value):
     with pytest.raises(ValueError): scalar(value)
+
+
+@pytest.mark.parametrize("field,value", [("image_shaders", {}), ("uv_shaders", []),
+    ("filters", ["cubic"]), ("address_modes", ["clamp"]), ("primvar", "uv"),
+    ("texcoord_index", 1), ("max_graph_nodes", 1000), ("max_graph_depth", 1000)])
+def test_unknown_texture_profile_contract_fails_closed(field, value):
+    policy = copy.deepcopy(load_profile({"HRT_PLUGIN_ROOT": str(FIXTURE)}).materials)
+    policy["textures"][field] = value
+    with pytest.raises(ValueError): validate_policy(policy)

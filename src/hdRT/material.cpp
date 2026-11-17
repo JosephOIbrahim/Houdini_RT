@@ -1,4 +1,5 @@
 #include "material.h"
+#include "materialTexture.h"
 #include "log.h"
 #include "renderParam.h"
 #include "scene.h"
@@ -14,7 +15,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 bool HdRTMaterialData::operator==(const HdRTMaterialData& other) const
 {
-    return supported == other.supported && reason == other.reason &&
+    return supported == other.supported && reason == other.reason && textures == other.textures &&
         std::memcmp(&parameters, &other.parameters, sizeof(parameters)) == 0;
 }
 
@@ -109,7 +110,7 @@ bool NativeTypeMetadata(const std::pair<const TfToken, VtValue>& entry, const Hd
 {
     const std::string name = entry.first.GetString();
     return name.compare(0, 9, "typeName:") == 0 && entry.second.IsHolding<TfToken>() &&
-        node.parameters.count(TfToken(name.substr(9)));
+        (node.parameters.count(TfToken(name.substr(9))) || node.inputConnections.count(TfToken(name.substr(9))));
 }
 
 bool NeutralDisplacement(const HdMaterialNode2& node)
@@ -189,10 +190,25 @@ HdRTMaterialData HdRTTranslateMaterial(const VtValue& resource)
         result.reason = "unsupported surface shader: " + node.nodeTypeId.GetString();
         return result;
     }
-    if (!node.inputConnections.empty()) {
-        result.reason = "connected input is outside the constant OpenPBR profile: " +
-            node.inputConnections.begin()->first.GetString();
-        return result;
+    for (const auto& input : node.inputConnections) {
+        const int slot = HdRTTextureInputSlot(input.first);
+        if (slot < 0 || input.second.size() != 1) {
+            result.reason = "unsupported or ambiguous connected input: " + input.first.GetString();
+            return result;
+        }
+        const int channels = slot == HdRTBaseColor || slot == HdRTSpecularColor ? 3 : 1;
+        if (!HdRTTranslateTexture(network,input.second.front(),channels,&result.textures[slot],&result.reason)) {
+            result.reason = "connected input " + input.first.GetString() + ": " + result.reason;
+            return result;
+        }
+        const auto& texture = result.textures[slot];
+        if (texture.addressU == 0 || texture.addressV == 0) {
+            const float low = slot == HdRTIor ? 1.f : 0.f, high = slot == HdRTIor ? 3.f : 1.f;
+            for (int k=0;k<channels;++k) if (texture.fallback[k] < low || texture.fallback[k] > high) {
+                result.reason = "image constant-border default exceeds the input range: " + input.first.GetString();
+                return result;
+            }
+        }
     }
     HdRTVkMaterial parameters;
     for (const auto& entry : node.parameters) {
@@ -202,7 +218,7 @@ HdRTMaterialData HdRTTranslateMaterial(const VtValue& resource)
         const std::string name = entry.first.GetString();
         if (name.compare(0, 11, "colorSpace:") == 0) {
             if (entry.second.IsHolding<TfToken>() && entry.second.UncheckedGet<TfToken>().IsEmpty() &&
-                node.parameters.count(TfToken(name.substr(11)))) continue;
+                (node.parameters.count(TfToken(name.substr(11))) || node.inputConnections.count(TfToken(name.substr(11))))) continue;
             result.reason = "explicit color-space conversion is unsupported: " + name;
             return result;
         }

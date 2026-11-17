@@ -1,0 +1,27 @@
+{
+  "scope": "Independent M7 criteria and all helper sources frozen before GUI candidate images",
+  "files": {
+    "audit_processes.ps1": "37ceb6396c594f103f688d30ba350b376b87eab0dabccda0d48b8cbcf2682964",
+    "event_journal.py": "d111a66c72668c1e5c5581d3b898df10dc9a30929d52c788f6bec23fb7a129a5",
+    "fresh_gui.py": "37df7e0d87bdde8671c19a6cb10f405f81cd2ee980872c02ac1e44d12fc37b7a",
+    "generation_journal.py": "14911c9c716a8185712ede94c40e04e5727b48b3e95c677cfed0df1fd8b7fe16",
+    "gui_accumulation.py": "b4e8bc09fc3f0434fd77d4bab196b15eee3aa1b93252c134b6fe4b8cb55a0849",
+    "gui_camera_repair.py": "7247f125c165cb2bdf41e3daaaaa743d55b06a67b0d676119809b46f7aa0087c",
+    "gui_reliable_lighting.py": "f82141157e10af4f064d0499f639417e364dd0d681c65d5911c7c3eeecd80b54",
+    "gui_reliable_materials.py": "c326c592aca9fcc0533cc2fcceb5211df891287a75f9f1b1080064fa1a611d98",
+    "gui_textures_hdri.py": "f6f9c698de69ff404538d8bebeda14544c6c94e0758764ce6de21423de5ed3f8",
+    "image_metrics.py": "beac08225f5d160eb60d9759657df8da98d05fd2b4d1608af1308519c7c2f9dd",
+    "installed_workflow_base.py": "6bc3c19c48835db011e3cb423a9edd60d8e58b1146f698ecd9969b146f8f9da9",
+    "judge_contract.json": "536836bc5a16d8fcc9514ba32571390d57644564dd4c7d45d7c214f3567a9a01",
+    "judge_freshness.py": "59b20f5d572b552b7a2231e2a8950f28ef18141733cec57db7389c949218da50",
+    "judge_gui.py": "baeda5a4e9733007826d3e70fda83dcff2cc65ce60afebaf214fd5700d5098d2",
+    "launch.ps1": "980952e8da39408ca5fe83b71055ba8505490b587383ea05b806133cfc90930c",
+    "live_fixture_lop.py": "5f895101181e35700230d032e6c2d28dabbf2ed7ce64a259b07d5e2aef342409",
+    "live_workflow_base.py": "9cff66a71b252c5f32157c2f79ccd647ce65f4f70bdc963476b7ec5347db2f6c",
+    "native_evidence.py": "d72087057ccbf7a120787f15b1750c79ded5ed9996d6cecdd295c683e25b3e7f",
+    "prepare_assets.py": "69d5fb18899010ec603b24e5b5f913e476df6306758fc38dbec5c9315897a767",
+    "probe_native_fixture.py": "f9d03535e06c7d451c0509bb5721b82782d5ecb9e981946706a324f12f785d47",
+    "README.md": "48ef8afb1ae5a19552aaada37dc63a8c210aeb65bda3da2d3e8df81863392ac2",
+    "run_fresh_gui.py": "c36d62477b84c8c1f5197f10ec9657a3251bd29fdbb308cd1790fd2e7e3b19f8"
+  }
+}

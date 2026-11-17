@@ -11,6 +11,7 @@
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3i.h"
 #include "pxr/base/vt/array.h"
 #include "pxr/base/vt/types.h"
@@ -50,6 +51,8 @@ struct HdRTMeshData
     VtVec3fArray points;        ///< object-space positions, as authored
     VtVec3fArray normals;       ///< object-space smooth vertex normals (Hd_SmoothNormals), one per point
     VtVec3fArray cornerNormals; ///< authored shading normals, three per triangle; empty uses smooth normals
+    VtVec2fArray cornerUVs;     ///< st, three per triangle; never causes geometry splitting
+    std::string uvReason = "st UV primvar is missing";
     VtVec3iArray triangles;     ///< HdMeshUtil::ComputeTriangleIndices, indices into points
     VtIntArray faceIds;         ///< authored polygon index for each triangulated primitive
     int primId = -1;            ///< Hydra selection ID, never a transient GPU slot
@@ -61,14 +64,25 @@ struct HdRTMeshData
     uint64_t geometryVersion = 0; ///< changes only with positions or topology
     uint64_t topologyVersion = 0; ///< changes only with topology (and first publication)
     uint64_t normalVersion = 0;   ///< independently tracks shading data without rebuilding a BLAS
+    uint64_t uvVersion = 0;       ///< shading-only UV revision
     HdRTCensus census;            ///< cached even while hidden; no per-frame vertex walk
 };
 
-/// One uniform (untextured) dome light: radiance = intensity * 2^exposure * color.
+/// A uniform or latlong dome. Textures are decoded only on the render thread.
 struct HdRTDomeData
 {
     GfVec3f radiance{0.0f};
     bool    visible = true;
+    bool hasTexture = false, supported = true;
+    std::string authoredPath, resolvedPath, colorSpace, textureFormat = "automatic", reason;
+    GfMatrix4d worldToDome{1.0};
+    bool operator==(const HdRTDomeData& rhs) const
+    {
+        return radiance == rhs.radiance && visible == rhs.visible && hasTexture == rhs.hasTexture &&
+            supported == rhs.supported && authoredPath == rhs.authoredPath && resolvedPath == rhs.resolvedPath &&
+            colorSpace == rhs.colorSpace && textureFormat == rhs.textureFormat &&
+            reason == rhs.reason && worldToDome == rhs.worldToDome;
+    }
 };
 
 /// Everything the renderer needs from Hydra, copied out under the lock.
@@ -121,8 +135,7 @@ public:
     {
         std::lock_guard<std::mutex> lock(_mutex);
         auto found = _snapshot.domes.find(id);
-        if (found != _snapshot.domes.end() && found->second.radiance == dome.radiance &&
-            found->second.visible == dome.visible)
+        if (found != _snapshot.domes.end() && found->second == dome)
             return;
         _snapshot.domes[id] = dome;
         ++_snapshot.contentVersion;

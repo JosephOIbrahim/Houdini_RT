@@ -46,6 +46,7 @@ HdRTMesh::GetInitialDirtyBitsMask() const
         | HdChangeTracker::DirtyPrimvar
         | HdChangeTracker::DirtyNormals
         | HdChangeTracker::DirtyPrimID
+        | HdChangeTracker::DirtyMaterialId
         | HdChangeTracker::DirtyInstancer
         ;
     return (HdDirtyBits)mask;
@@ -129,9 +130,32 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
         // The polygons as authored. Refinement is not supported, so the refine level is left at 0.
         const HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
         if (!(topology == _topology)) {
+            // Subset bindings are shading edits, not geometry revisions.
+            HdMeshTopology geometryTopology(topology);
+            geometryTopology.SetGeomSubsets(_topology.GetGeomSubsets());
+            if (!(geometryTopology == _topology)) {
+                _adjacencyValid = false;
+                topologyDirty = geometryDirty = changed = true;
+            }
+            bool unsupported = false;
+            for (const auto& subset : topology.GetGeomSubsets())
+                unsupported = unsupported || !subset.materialId.IsEmpty();
+            if (unsupported != _materialSubsetsUnsupported) {
+                _materialSubsetsUnsupported = unsupported;
+                changed = true;
+                if (unsupported)
+                    HdRTLog("WARNING: mesh %s has per-face material bindings; whole-mesh "
+                            "displayColor Lambert fallback is used", id.GetText());
+            }
             _topology = topology;
-            _adjacencyValid = false;
-            topologyDirty = geometryDirty = changed = true;
+        }
+    }
+
+    if (first || (*dirtyBits & HdChangeTracker::DirtyMaterialId)) {
+        const SdfPath materialId = sceneDelegate->GetMaterialId(id);
+        if (materialId != GetMaterialId()) {
+            SetMaterialId(materialId);
+            changed = true;
         }
     }
 
@@ -257,6 +281,8 @@ HdRTMesh::Sync(HdSceneDelegate *sceneDelegate,
     data->primId = primId;
     data->transform = _transform;
     data->albedo    = _albedo;
+    data->materialId = GetMaterialId();
+    data->materialSubsetsUnsupported = _materialSubsetsUnsupported;
     data->visible   = IsVisible() && _geometryValid;
     if (geometryDirty || transformDirty)
         HdRTUpdateMeshCensus(data.get());

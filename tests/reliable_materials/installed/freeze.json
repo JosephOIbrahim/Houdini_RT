@@ -1,0 +1,10 @@
+{
+  "created_utc": "2026-11-17T15:01:49.844734+00:00",
+  "scope": "Pre-GUI acceptance freeze; no material GUI candidate images observed",
+  "files": {
+    "judge_gui.py": "72dd782abd036bf680c63b07145ceac3886b55788077854a52478bed2d7ef00a",
+    "native_evidence.py": "4e7116e22babdf5aa2834ba6b7515b8d5afd1bdae8195de96bad8769a110d16a",
+    "run_replay.py": "4abe0c51c7a954ef85e4bfc3d00bb1fe35e568d8180c5fb10e7ae51ff682b83d",
+    "judge_contract.json": "010b52891eb4dc272049fd2007596a4de1167dbc83fe9546216b0d743f9ad260"
+  }
+}

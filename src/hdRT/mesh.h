@@ -68,6 +68,7 @@ private:
     std::string       _normalWarning;
     bool               _warnedInstanced = false;
     bool               _geometryValid = false;
+    bool               _materialSubsetsUnsupported = false;
     std::shared_ptr<const HdRTMeshData> _published;
 
     HdRTMesh(const HdRTMesh&)             = delete;

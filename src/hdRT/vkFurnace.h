@@ -17,6 +17,15 @@
 #include <string>
 #include <vector>
 
+/// Bounded opaque, isotropic OpenPBR constants. Matches three std430 vec4s.
+struct HdRTVkMaterial
+{
+    float baseColorWeight[4] = {0.8f, 0.8f, 0.8f, 1.0f};
+    float specularColorWeight[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    float properties[4] = {0.0f, 0.3f, 1.5f, 0.0f}; // metalness, roughness, IOR, diffuse roughness
+};
+static_assert(sizeof(HdRTVkMaterial) == 48, "OpenPBR material layout");
+
 /// Borrowed immutable object-space data. Version tokens must change after remove/re-add.
 struct HdRTVkMesh
 {
@@ -35,6 +44,8 @@ struct HdRTVkMesh
     uint64_t normalVersion = 0; // zero follows geometryVersion for legacy callers
     const int32_t* faceIds = nullptr;
     int32_t primId = -1;
+    HdRTVkMaterial material;
+    bool useOpenPbr = false;
 };
 
 /// World-space analytic emitter. All arrays match std430 vec4 alignment.
@@ -89,7 +100,7 @@ struct HdRTVkFrame
     float invProj[16] = {};         ///< normalised device coordinates to camera space
     bool orthographic = false;
     float dome[3] = { 0.0f, 0.0f, 0.0f };   ///< uniform dome radiance collected by paths that leave the scene
-    uint32_t bounces = 16;          ///< diffuse bounces after the first hit
+    uint32_t bounces = 16;          ///< surface bounces after the first hit
     uint32_t seed = 1;
     bool guides = false;
 };

@@ -6,6 +6,29 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+bool HdRTResolveMeshMaterial(const HdRTWorldScene& world, const HdRTMeshData& mesh,
+                             HdRTVkMaterial* material, std::string* reason)
+{
+    *material = HdRTVkMaterial();
+    reason->clear();
+    if (mesh.materialSubsetsUnsupported) {
+        *reason = "per-face material bindings are outside the whole-mesh material profile";
+        return false;
+    }
+    if (mesh.materialId.IsEmpty()) return false;
+    const auto found = world.materials.find(mesh.materialId);
+    if (found == world.materials.end()) {
+        *reason = "bound material is unavailable: " + mesh.materialId.GetString();
+        return false;
+    }
+    if (!found->second->supported) {
+        *reason = mesh.materialId.GetString() + ": " + found->second->reason;
+        return false;
+    }
+    *material = found->second->parameters;
+    return true;
+}
+
 void HdRTUpdateMeshCensus(HdRTMeshData* mesh)
 {
     HdRTCensus result;
@@ -40,6 +63,7 @@ std::shared_ptr<const HdRTWorldScene> HdRTBuildScene(HdRTSceneSnapshot const& sn
 {
     auto world = std::make_shared<HdRTWorldScene>();
     world->meshes = snapshot.meshes;
+    world->materials = snapshot.materials;
     world->contentVersion = snapshot.contentVersion;
     for (const auto& entry : snapshot.lights) world->lights.push_back(entry.second);
     for (const auto& entry : snapshot.domes) {

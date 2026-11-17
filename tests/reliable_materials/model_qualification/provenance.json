@@ -1,0 +1,83 @@
+{
+  "specification": {
+    "version": "1.1.1",
+    "commit": "f8d6d947dfae4c9b599965a86c22826ea7a8dbfb",
+    "url": "https://github.com/AcademySoftwareFoundation/OpenPBR/blob/f8d6d947dfae4c9b599965a86c22826ea7a8dbfb/index.html",
+    "archived_path": "E:\\Myth_and_Logic\\Software\\HoudiniRT\\worktrees\\reliable-materials\\build\\m6\\model-qualification\\spec-v1.1.1.html",
+    "sha256": "3bec2edd0abd1f6a626777783f945825d771caf680c2e1e19abe7c3329e1595a",
+    "relevant_lines": {
+      "glossy_diffuse": [
+        585,
+        602
+      ],
+      "microfacet_multiple_scattering": [
+        369,
+        377
+      ]
+    },
+    "license_path": "E:\\Myth_and_Logic\\Software\\HoudiniRT\\worktrees\\reliable-materials\\build\\m6\\model-qualification\\spec-LICENSE",
+    "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  "installed_materialx": [
+    {
+      "path": "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\houdini\\materialx\\libraries\\bxdf\\open_pbr_surface.mtlx",
+      "sha256": "2a3139df7d75801bbbba184977ecdfeb8b8bd40683264cb9a81ab470ad90c7b8",
+      "functions": [
+        "OpenPBR1.1.1 nodedef",
+        "dielectric_base",
+        "metal_bsdf",
+        "open_pbr_anisotropy"
+      ]
+    },
+    {
+      "path": "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\houdini\\materialx\\libraries\\pbrlib\\genglsl\\mx_dielectric_bsdf.glsl",
+      "sha256": "07902964eedea700adee2691d6dc5f52a6114b9aa0ea5b8cbb27b9eb2dbd9786",
+      "functions": [
+        "mx_dielectric_bsdf"
+      ]
+    },
+    {
+      "path": "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\houdini\\materialx\\libraries\\pbrlib\\genglsl\\mx_layer_bsdf.glsl",
+      "sha256": "7ff46ed4c4e3dec426a2fc22b7ed0fd4ac08f9e86d79d56de656f2d75b9de66b",
+      "functions": [
+        "mx_layer_bsdf"
+      ]
+    },
+    {
+      "path": "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\houdini\\materialx\\libraries\\pbrlib\\genglsl\\mx_generalized_schlick_bsdf.glsl",
+      "sha256": "c8240b0d2646591302d0c9270afc897a9bbc49f078e4bf241b5b741564ed38b5",
+      "functions": [
+        "mx_generalized_schlick_bsdf"
+      ]
+    },
+    {
+      "path": "C:\\Program Files\\Side Effects Software\\Houdini 22.0.429\\houdini\\materialx\\libraries\\pbrlib\\genglsl\\lib\\mx_microfacet_specular.glsl",
+      "sha256": "ee390c557e1a0028169664adb0a73bf7f33c4f599dde0eb47a36b1fe3487240c",
+      "functions": [
+        "mx_ggx_NDF",
+        "mx_ggx_smith_G2",
+        "mx_ggx_dir_albedo_analytic",
+        "mx_ggx_energy_compensation",
+        "mx_fresnel_dielectric"
+      ]
+    }
+  ],
+  "adobe": [
+    {
+      "path": "E:\\Myth_and_Logic\\Software\\HoudiniRT\\worktrees\\reliable-materials\\third_party\\openpbr-bsdf\\README.md",
+      "sha256": "4109b43d924103579897004704e0dee9a357c1b95f1d33bc541ea49d3b4ad33f"
+    },
+    {
+      "path": "E:\\Myth_and_Logic\\Software\\HoudiniRT\\worktrees\\reliable-materials\\third_party\\openpbr-bsdf\\impl\\openpbr_diffuse_lobe.h",
+      "sha256": "97647315cfae66bf0f82834c87c151ee5028f813f25375e899755dab949c77b5"
+    },
+    {
+      "path": "E:\\Myth_and_Logic\\Software\\HoudiniRT\\worktrees\\reliable-materials\\third_party\\openpbr-bsdf\\impl\\openpbr_bsdf.h",
+      "sha256": "3a3af1be9c711152d623f9e6a124cbb696039e5854b38ca09e287668e707f8ef"
+    },
+    {
+      "path": "E:\\Myth_and_Logic\\Software\\HoudiniRT\\worktrees\\reliable-materials\\third_party\\openpbr-bsdf\\impl\\openpbr_microfacet_multiple_scattering_lobes.h",
+      "sha256": "56f1c4ab76de91120e96c2ef4e3da06d5e667214e260e4266ccd8d1d19fb3d44"
+    }
+  ]
+}

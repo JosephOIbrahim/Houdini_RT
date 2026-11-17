@@ -13,6 +13,21 @@ actually run.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-17
+
+### Added
+
+- Installed-profile inspection for bounded opaque isotropic OpenPBR constants,
+  using native Material Library / OpenPBR Surface / Assign Material controls.
+- Full-purpose binding and inherited assignment checks; exact property reasons
+  for whole-mesh displayColor fallback, while ignoring unused material definitions.
+- Interface-input connections are explicitly not assessed because Hydra may
+  flatten them into supported constants; the report does not invent a fallback.
+- Real USD tests for terminal ports, connections, ranges, color-space tags,
+  neutral displacement and material subsets; native Houdini fixture export.
+- Disclosures for scene-linear constants, the 0.001 roughness minimum and the
+  requirement to keep light diffuse/specular factors at 1 for OpenPBR.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added

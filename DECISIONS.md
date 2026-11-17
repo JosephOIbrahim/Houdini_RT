@@ -204,3 +204,51 @@
   budget for flipbooks. Houdini's capture time limit did not stop the high-budget
   bound-camera render in this harness. Preserve failed harness attempts and state
   exactly which completed components contribute to acceptance.
+
+## 2026-11-17 (Phase 4A, bounded native OpenPBR materials)
+
+- Advance the approved roadmap with opaque isotropic OpenPBR constants authored
+  through the native Material Library and Assign Material nodes. The integrated
+  viewer controller remains the sole Enable/Pause/Resume/Off workflow. UVs,
+  textures, color conversion and HDRI sampling follow this bounded increment.
+- Translate Hydra material networks on the CPU, including Houdini's paired
+  `typeName:` metadata and neutral displacement output. Snapshot material values
+  and mesh bindings; update GPU shading rows without geometry uploads or AS work.
+  Unsupported graphs/lobes/color tags use a diagnosed whole-material matte fallback.
+  Host-flattened interface constants cannot be identified reliably by the delegate;
+  the scene-support report marks those source graphs Not assessed.
+- Use the pinned Apache-2.0 Adobe BSDF in texture-LUT mode. Full BSDF eval/sample/pdf
+  participates in light MIS. The numerical roughness minimum is 0.001. Keep light
+  diffuse/specular multipliers at one for accurate materials: independent lobe
+  scaling remains unsupported and is explicitly reported.
+- OpenPBR sampling needs random values strictly inside (0,1). Adobe's cosine
+  sampler can reject an exact-zero sample. Map the new BSDF randoms to exactly
+  representable 23-bit midpoints; a 24-bit midpoint can round up to one. Preserve
+  the legacy matte random stream. Exhaustive CPU checks and all eleven archived
+  defective pixel coordinates establish the endpoint cause.
+- Do not infer cross-renderer equality from the OpenPBR name. The exact 1.1.1
+  specification permits different glossy-diffuse and multiscattering choices.
+  Preserve the first strict Karma comparison as failed. Public MaterialX equations
+  predict its dielectric result; the private Karma metal residual is unresolved.
+  Keep every non-Lambert Karma comparison as characterization, with no numerical
+  tolerance relaxation and no claim that Karma appearance matches HoudiniRT.
+- Qualify transport against separately integrated CPU quadrature using the declared
+  Adobe model, supplemented by analytic energy/reciprocity and finite-light tests.
+  Shared Adobe source makes CPU/GPU agreement integration evidence, not an
+  independent BSDF implementation. Freeze reference inputs before candidate images.
+- Native Karma float beauty uses LPE `C.*[LO]`, `color4f`, and husk AOV name `C`.
+  Raw `color` is not interchangeable with that binding. Use separate output settings
+  in the same immutable scene for the two delegates; compare scene-linear float
+  images and retain both the half-float and incorrect-output diagnostic runs.
+- Houdini 22's beauty flipbook is a host capture, not a raw delegate AOV export.
+  Light guides can remain despite `beautyPassOnly(True)`. Fractional-coverage edge
+  alpha differs from headless output even with guides, selection, antialiasing and
+  OCIO disabled in controlled tests. Stock Karma reproduces the same edge behavior
+  against its own exact-stage 256-sample output; do not patch the renderer or fit
+  pixels to force agreement across different capture paths.
+- Judge live material edits against fresh regular-Houdini delegate sessions with
+  the same camera, scene and capture path, keeping full-frame numeric limits fixed.
+  Keep raw GPU/headless transport and coverage checks separate. Preserve failed
+  flipbook/husk equivalence evidence and explicitly exclude raw-AOV parity from
+  claims about viewport captures. The diagnostic alpha-over relation is evidence,
+  not proof of the private host compositor's implementation or an image correction.

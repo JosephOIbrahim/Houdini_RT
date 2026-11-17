@@ -82,6 +82,13 @@ struct Buffer
     VkMemoryPropertyFlags memoryProperties = 0;
 };
 
+struct BsdfTexture
+{
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+};
+
 // The KHR acceleration-structure entry points are not exported by the loader library; fetch them.
 struct AsApi
 {
@@ -99,14 +106,15 @@ struct Accel
     VkDeviceAddress address = 0;
 };
 
-// Four uint64 addresses/padding, then one vec4: exactly the shader's std430 table row.
+// Addresses, legacy color, flags and bounded OpenPBR constants: the shader's std430 table row.
 struct MeshRow
 {
     uint64_t positions = 0, normals = 0, indices = 0, faceIds = 0;
     float albedo[4] = {};
     int32_t metadata[4] = {-1, 0, 0, 0};
+    HdRTVkMaterial material;
 };
-static_assert(sizeof(MeshRow) == 64, "MeshRow must match the shader");
+static_assert(sizeof(MeshRow) == 112, "MeshRow must match the shader");
 
 struct MeshGpu
 {
@@ -195,6 +203,8 @@ struct HdRTVkFurnace::Impl
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+    BsdfTexture bsdfTextures[8];
+    VkSampler bsdfSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout resolveSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout resolvePipelineLayout = VK_NULL_HANDLE;
     VkShaderModule resolveShader = VK_NULL_HANDLE;
@@ -249,6 +259,11 @@ struct HdRTVkFurnace::Impl
     void DestroyMesh(MeshGpu& mesh);
     void DestroyScene();
     bool CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error);
+    bool CreateBsdfTextures(std::string* error);
+    bool CreateBsdfTexture(BsdfTexture& out, VkFormat format, uint32_t width,
+                          uint32_t height, uint32_t depth, const void* data,
+                          size_t bytes, std::string* error);
+    void DestroyBsdfTextures();
     bool CreateResolvePipeline(const std::vector<uint32_t>& spirv, std::string* error);
     void Destroy();
 };
@@ -640,7 +655,8 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
             VkPhysicalDeviceFeatures2 f2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
             f2.pNext = &v12;
             vkGetPhysicalDeviceFeatures2(candidate, &f2);
-            rayQuery = rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && f2.features.shaderInt64;
+            rayQuery = rq.rayQuery && asf.accelerationStructure && v12.bufferDeviceAddress && f2.features.shaderInt64
+                && f2.features.shaderSampledImageArrayDynamicIndexing;
         }
         const int rank = (rayQuery ? 2 : 0) + (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 1 : 0);
         if (rank > bestRank)
@@ -655,7 +671,7 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
         return _Fail(error, "the only Vulkan devices on this machine are software (CPU) devices, and those are refused");
     deviceName = chosenProps.deviceName;
     if (!chosenHasRayQuery)
-        return _Fail(error, "the selected device (" + deviceName + ") does not support acceleration structures and ray queries");
+        return _Fail(error, "the selected device (" + deviceName + ") lacks ray queries, buffer addresses, int64 or sampled-image array indexing");
 
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR };
     VkPhysicalDeviceProperties2 props2 = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
@@ -704,6 +720,7 @@ bool HdRTVkFurnace::Impl::CreateDevice(bool allowSoftwareDevice, std::string* er
     dci.pNext = &enable12;
     VkPhysicalDeviceFeatures coreFeatures = {};
     coreFeatures.shaderInt64 = VK_TRUE;
+    coreFeatures.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
     dci.pEnabledFeatures = &coreFeatures;
     HDRT_VK(vkCreateDevice(phys, &dci, nullptr, &device));
     vkGetDeviceQueue(device, family, 0, &queue);
@@ -846,6 +863,8 @@ bool HdRTVkFurnace::Impl::UpdateMesh(MeshGpu& mesh, const HdRTVkMesh& view,
     row.faceIds = mesh.faceIds.buffer ? BufferAddress(mesh.faceIds.buffer) : 0;
     row.metadata[0] = view.primId;
     row.metadata[1] = view.cornerNormals ? 1 : 0;
+    row.metadata[2] = view.useOpenPbr ? 1 : 0;
+    row.material = view.material;
     std::memcpy(row.albedo, view.albedo, sizeof(row.albedo));
     std::memcpy(mesh.transform, view.transform, sizeof(mesh.transform));
     mesh.visible = view.visible;
@@ -928,6 +947,18 @@ bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
         const size_t requiredNormals = view.cornerNormals ? view.triangleCount * 3 : view.vertexCount;
         if (normalCount < requiredNormals || normalCount > size_t(UINT32_MAX) / 3)
             return _Fail(error, "normal array does not cover shader indices or exceeds indexing limits");
+        if (view.useOpenPbr) {
+            for (float value : view.material.baseColorWeight)
+                if (!std::isfinite(value) || value < 0 || value > 1)
+                    return _Fail(error, "OpenPBR base color/weight must be finite and in [0,1]");
+            for (float value : view.material.specularColorWeight)
+                if (!std::isfinite(value) || value < 0 || value > 1)
+                    return _Fail(error, "OpenPBR specular color/weight must be finite and in [0,1]");
+            const float* p = view.material.properties;
+            if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]) ||
+                p[0] < 0 || p[0] > 1 || p[1] < 0 || p[1] > 1 || p[2] < 1 || p[2] > 3 || p[3] != 0)
+                return _Fail(error, "OpenPBR requires metalness/roughness [0,1], IOR [1,3], diffuse roughness 0");
+        }
     }
     HDRT_VK(vkQueueWaitIdle(queue));
     bool tlasDirty = false;
@@ -1012,20 +1043,23 @@ bool HdRTVkFurnace::Impl::SetMeshes(const std::vector<HdRTVkMesh>& input,
     return !tlasDirty || BuildTlas(stats, error);
 }
 
-// ---- pipeline: four bindings (0 TLAS, 1 frame, 2 accumulation, 3 mesh table) ---------------------------------------------------
+#include "vkBsdfTextures.inl"
+
+// Bindings 0..5 retain the scene layout; 6/7 are immutable OpenPBR texture LUTs.
 
 bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std::string* error)
 {
-    VkDescriptorSetLayoutBinding bindings[6] = {};
-    for (uint32_t k = 0; k < 6; ++k)
+    VkDescriptorSetLayoutBinding bindings[8] = {};
+    for (uint32_t k = 0; k < 8; ++k)
     {
         bindings[k].binding = k;
-        bindings[k].descriptorType = (k == 0) ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[k].descriptorCount = 1;
+        bindings[k].descriptorType = k >= 6 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER :
+            (k == 0) ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[k].descriptorCount = k >= 6 ? 8 : 1;
         bindings[k].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
     VkDescriptorSetLayoutCreateInfo dslci = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-    dslci.bindingCount = 6;
+    dslci.bindingCount = 8;
     dslci.pBindings = bindings;
     HDRT_VK(vkCreateDescriptorSetLayout(device, &dslci, nullptr, &setLayout));
 
@@ -1050,10 +1084,11 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     pci.layout = pipelineLayout;
     HDRT_VK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &pipeline));
 
-    VkDescriptorPoolSize poolSizes[2] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 }, { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 } };
+    VkDescriptorPoolSize poolSizes[3] = { { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5 }, { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16 } };
     VkDescriptorPoolCreateInfo dpci = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
     dpci.maxSets = 1;
-    dpci.poolSizeCount = 2;
+    dpci.poolSizeCount = 3;
     dpci.pPoolSizes = poolSizes;
     HDRT_VK(vkCreateDescriptorPool(device, &dpci, nullptr, &descriptorPool));
 
@@ -1062,6 +1097,7 @@ bool HdRTVkFurnace::Impl::CreatePipeline(const std::vector<uint32_t>& spirv, std
     dsai.descriptorSetCount = 1;
     dsai.pSetLayouts = &setLayout;
     HDRT_VK(vkAllocateDescriptorSets(device, &dsai, &descriptorSet));
+    if (!CreateBsdfTextures(error)) return false;
 
     if (!CreateBuffer(sizeof(FrameGpu), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &frameBuffer, error))
         return false;
@@ -1167,6 +1203,7 @@ void HdRTVkFurnace::Impl::Destroy()
             vkDestroyDescriptorPool(device, descriptorPool, nullptr);   // frees the descriptor set with it
         if (setLayout)
             vkDestroyDescriptorSetLayout(device, setLayout, nullptr);
+        DestroyBsdfTextures();
         DestroyBuffer(frameBuffer);
         DestroyBuffer(accumBuffer);
         DestroyBuffer(resolvedBuffer);

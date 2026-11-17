@@ -616,6 +616,21 @@ HdRTRenderer::_RenderFrame(HdRenderThread *renderThread)
                 mesh.albedo[r] = data.albedo[r];
             }
             mesh.visible = data.visible;
+            std::string materialReason;
+            mesh.useOpenPbr = HdRTResolveMeshMaterial(w, data, &mesh.material, &materialReason);
+            if (!materialReason.empty()) {
+                std::string previousReason;
+                if (_uploadedScene) {
+                    const auto oldMesh = _uploadedScene->meshes.find(entry.first);
+                    if (oldMesh != _uploadedScene->meshes.end()) {
+                        HdRTVkMaterial unused;
+                        HdRTResolveMeshMaterial(*_uploadedScene, *oldMesh->second, &unused, &previousReason);
+                    }
+                }
+                if (materialReason != previousReason)
+                    HdRTLog("WARNING: mesh %s: %s; whole-mesh displayColor Lambert fallback",
+                            mesh.id.c_str(), materialReason.c_str());
+            }
             meshes.push_back(std::move(mesh));
         }
         HdRTVkEditStats edits;

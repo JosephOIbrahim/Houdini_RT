@@ -118,6 +118,10 @@ public:
         return HdTokens->full;
     }
 
+    TfTokenVector GetMaterialRenderContexts() const override;
+    TfTokenVector GetShadingSystems() const override;
+    TfTokenVector GetShaderSourceTypes() const override;
+
     /// What format each named AOV is rendered in.
     HdAovDescriptor
         GetDefaultAovDescriptor(TfToken const& name) const override;

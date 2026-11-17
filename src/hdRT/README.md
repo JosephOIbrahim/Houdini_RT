@@ -3,11 +3,14 @@
 A Hydra render delegate for Houdini 22. Houdini (the Solaris viewport, or `husk` on the command line)
 loads it as a renderer called **HoudiniRT**.
 
-**Phase 2B: GPU accumulation, batching and resolve.** The delegate syncs polygon meshes (points, topology, transform,
-visibility, constant `displayColor`) and untextured dome lights from Hydra. Meshes retain object-space
-geometry and individual acceleration structures on the GPU, traced with Vulkan ray queries: Lambertian surfaces, the dome
-lighting every path that leaves the scene, never visible to the camera. Not yet: materials, textures,
-other lights, instancing, subdivision, AOVs other than colour.
+**Phase 4A: bounded MaterialX/OpenPBR materials.** The delegate renders polygon meshes with
+authored normals, uniform domes, distant lights and rectangle/disk/sphere lights. Whole-mesh
+MaterialX OpenPBR bindings support opaque isotropic base and specular constants through Adobe's
+BSDF in texture LUT mode. Unbound or unsupported materials use the diagnosed displayColor
+Lambert fallback. The integrated **Check scene support** report identifies limitations by USD path.
+Textures, HDRI maps, additional lobes, instancing and subdivision remain unsupported.
+Beauty, normal, eye normal, depth, camera depth, primitive/element/instance IDs and base-color
+diagnostics share the same publication generation; exact semantics are in `capabilities.json`.
 
 Running sums stay in device-local GPU memory. Short batches trace consecutive samples; a separate
 compute pass resolves scene-linear RGBA for presentation. Only resolved images are read back to Houdini.
@@ -24,12 +27,12 @@ The sealed exam (`verify/s5_liveedits.sh`, including the s4 regression) builds i
 ```
 cmake -S src/hdRT -B build/s4/cmake -G "Visual Studio 17 2022" -A x64 \
       -DCMAKE_PREFIX_PATH="C:/Program Files/Side Effects Software/Houdini 22.0.429/toolkit/cmake"
-cmake --build build/s4/cmake --config Release
+cmake --build build/s4/cmake --config Release --parallel 1
 cmake --install build/s4/cmake --config Release --prefix build/plugin_stage
 ```
 
-`build/plugin_stage` then holds `plugInfo.json`, `hdRT.dll`, `shaders/furnace.spv` and
-`shaders/resolve.spv`. Both shaders are required beside the installed plugin. Nothing is
+`build/plugin_stage` then holds `plugInfo.json`, `capabilities.json`, `hdRT.dll`, both
+`shaders/furnace.spv` and `shaders/resolve.spv`, and the OpenPBR license. Both shaders are required. Nothing is
 written anywhere else. The Vulkan SDK is needed only for `glslangValidator`; headers and the import
 library for Vulkan come from the Houdini install.
 
@@ -45,13 +48,15 @@ HoudiniRT in the chosen Solaris viewer; Pause/Resume uses that viewer's native r
 its previous renderer and pause state. The native renderer menu remains available for direct selection.
 
 Edit ordinary scene parameters while rendering. Transforms and visibility update the instance structure;
-points and topology update only the changed mesh; constant displayColor updates its table row. Edits
+points and topology update only the changed mesh; displayColor and material constants update shading tables. Edits
 made while paused remain pending until Resume. The last image stays visible until a current replacement
 is ready. Insertion and deletion use the same scene handoff, without a separate toggle or restart command.
 
-What you will see: the meshes, Lambert-shaded by `displayColor` under the dome, on a transparent
-background (the dome lights the scene but is not drawn). `verify/s4_firstlight.sh` checks the census,
-linearity in the light, and the picture against Karma CPU.
+Use a Material Library with an MtlX OpenPBR Surface and an Assign Material LOP for material editing.
+Supported controls and native defaults are listed in `capabilities.json`; unsupported connected
+inputs or lobes fall back as a whole material. The dome lights the scene but is not drawn.
+`verify/s4_firstlight.sh` retains the independent matte regression; `tests/reliable_materials`
+adds material-specific physical, reference-image, live-edit and installed-workflow checks.
 
 ## Settings
 

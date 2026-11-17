@@ -37,3 +37,11 @@ reference files and the licence text are in `third_party/sascha_willems_vulkan/`
 `test/furnace_standalone.cpp`, `CMakeLists.txt`, `plugInfo.json`, `README.md`.
 
 No code under a copyleft licence is used, linked or was consulted.
+
+## Adobe OpenPBR BSDF
+
+The material kernel and lookup tables use Adobe's OpenPBR BSDF, copyright 2026 Adobe,
+licensed under Apache-2.0. The unmodified snapshot, license, upstream commit and file
+hashes are in `third_party/openpbr-bsdf`. Artist installation includes the license at
+`renderer/licenses/OpenPBR-LICENSE.txt`. HoudiniRT's material adapter and Vulkan resource
+management are separate integration code.

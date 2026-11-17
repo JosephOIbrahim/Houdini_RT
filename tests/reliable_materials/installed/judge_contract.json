@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "scope": "Independent installed native-material workflow, exported-USD replay and image correspondence; physical BSDF acceptance is established separately by analytic/GPU proofs and qualified exact-USD CPU transport. Non-Lambert Karma appearance is diagnostic and is not claimed matched.",
+  "sample_budget": 256,
+  "seed": 101,
+  "bounces": 4,
+  "capture_names": ["baseline", "base_color", "metalness", "roughness", "ior", "specular_weight", "reassigned", "unsupported_connection", "restored"],
+  "replay_relative_rgb_rmse_max": 0.01,
+  "replay_channel_mean_relative_max": 0.005,
+  "replay_channel_mean_absolute_floor": 0.0005,
+  "replay_alpha_max_abs": 0.000001,
+  "material_numeric_max_abs": 0.000002,
+  "restored_image_max_abs": 0.00005,
+  "paused_seconds_min": 8,
+  "camera_edit_count": 4,
+  "reference": "Re-render the exact immutable exported viewer USD using the exact installed native payload, captured effective RenderSettings and captured fallback config. Compare raw linear EXRs without translation, crop, exposure or color fitting. This tests viewport/native-control delivery, not an independent BSDF implementation.",
+  "native_events": "Independently parse ordered raw request/present/batch/pause/resume events by renderer session; selected records must bind back to exact raw event identity. No work is permitted after active pause ACK until resume; edited material must publish a later scene and generation.",
+  "support": "Path-specific unsupported connection is required for the connected native constant; successful materials must retain native OpenPBR identity and exact authored constant values. Report staleness and original renderer/pause/grid restoration are checked."
+}

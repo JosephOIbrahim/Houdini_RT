@@ -13,9 +13,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(hdRT LANGUAGES CXX)
 
-# Passed by the exam. Neither is used yet: the furnace has no BSDF in it. OPENPBR arrives with first light.
+# Retain the exam arguments. Production always uses the hash-pinned vendored OpenPBR snapshot.
 set(HRT_REPO_ROOT "" CACHE PATH "Repository root")
-set(OPENPBR "" CACHE PATH "Adobe OpenPBR BSDF checkout (unused before step 4)")
+set(OPENPBR "" CACHE PATH "Legacy exam dependency argument; production uses third_party/openpbr-bsdf")
 
 # Houdini's HDK: headers for USD/Hydra and Vulkan, import libraries for both (HoudiniThirdParty carries
 # libpxr_* and vulkan-1.lib). "Houdini" alone leaves libpxr_hd and python313 unresolved (LNK2019).
@@ -32,6 +32,7 @@ if(NOT HRT_GLSLANG)
 endif()
 message(STATUS "HoudiniRT: GLSL compiler ${HRT_GLSLANG}")
 
+file(GLOB_RECURSE HRT_BSDF_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/openpbr-bsdf/*.h")
 set(HRT_SHADER_OUTPUTS)
 foreach(kernel IN ITEMS furnace resolve)
     set(shader_src "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${kernel}.comp")
@@ -40,7 +41,7 @@ foreach(kernel IN ITEMS furnace resolve)
         OUTPUT "${shader_spv}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/shaders"
         COMMAND "${HRT_GLSLANG}" -V --target-env vulkan1.2 -S comp "${shader_src}" -o "${shader_spv}"
-        DEPENDS "${shader_src}" shaders/lighting.glsl shaders/guides.glsl
+        DEPENDS "${shader_src}" shaders/lighting.glsl shaders/guides.glsl shaders/material.glsl ${HRT_BSDF_HEADERS}
         COMMENT "glslangValidator ${kernel}.comp"
         VERBATIM)
     list(APPEND HRT_SHADER_OUTPUTS "${shader_spv}")
@@ -56,6 +57,7 @@ add_library(hdRT SHARED
     settings.cpp
     mesh.cpp
     meshNormals.cpp
+    material.cpp
     light.cpp
     world.cpp
     vkFurnace.cpp)
@@ -79,3 +81,5 @@ install(FILES "$<TARGET_FILE:hdRT>" DESTINATION .)
 install(FILES plugInfo.json DESTINATION .)
 install(FILES capabilities.json DESTINATION .)
 install(FILES ${HRT_SHADER_OUTPUTS} DESTINATION shaders)
+
+install(FILES ../../third_party/openpbr-bsdf/LICENSE DESTINATION licenses RENAME OpenPBR-LICENSE.txt)

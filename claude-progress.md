@@ -1,5 +1,42 @@
 # Progress
 
+## 2026-11-17 — bounded native OpenPBR materials (Phase 4A)
+
+- Native Solaris Material Library/OpenPBR/Assign Material nodes drive seven
+  supported controls: base color/weight/metalness and specular color/weight/
+  roughness/IOR. The existing HoudiniRT viewer controls remain integrated.
+- CPU material snapshots and mesh bindings feed 112-byte GPU shading rows.
+  Material edits preserve geometry and acceleration structures. Adobe OpenPBR
+  uses texture LUTs and full-BSDF light MIS. Unsupported graphs/lobes/color tags
+  have path-specific matte fallback; interface graphs are honestly Not assessed.
+- Endpoint tests found and repaired rare zero-PDF samples using exact 23-bit
+  open-interval random midpoints. Exhaustive checks and all eleven archived
+  defective pixel locations establish the cause; legacy matte sampling is unchanged.
+- Unchanged sealed s5/s4 PASS with nonce `1889256396951641727`: 22 live/fresh
+  images exact, s4 Karma FLIP p99 0.0247. The final 109-case GPU matrix across
+  three seeds plus seven fresh controls passes, including material-only cost
+  invariants, grazing roughness-zero cases and validation through teardown.
+- Python 3.14: 494 passed/2 skipped; Python 3.12: 477 passed/19 skipped; actual
+  H22 USD/HOM: 21 passed. All 89 release inputs are unchanged from these tests.
+- Karma appearance parity is not claimed. Preserve the original failed comparison
+  and report model differences; separately integrated Adobe CPU scene transport,
+  analytic energy and reciprocity qualify the selected model without wider bounds.
+  UVs, texture decoding/color conversion and HDRI sampling remain the next increment.
+- Installed `reliable-materials-h22.0.429-744c84b9820d`: 112 verified payload files,
+  185 source inputs, seven proof receipts and 15 preserved registrations. The final
+  78-render USD pack passes its qualified transport/output/binding checks.
+- Regular native material edits, paused edits/latest resume, intended-viewer
+  isolation and prior paused Karma/grid restoration pass. All nine live images
+  exactly match fresh regular-Houdini process/delegate references in RGBA.
+  Active pause acknowledgement is 17.544 ms with an 8.00036-second no-work hold;
+  four camera edits measure 110.784/120.829 ms p50/p95 by independent observation.
+- Raw husk/flipbook edge-alpha equality is not claimed: native Karma reproduces
+  the capture distinction. Original failures remain preserved; matching-host GUI
+  acceptance uses unchanged full-frame limits. A separate filesystem-identity
+  audit resolves the frozen freshness check's sole Windows slash-spelling defect.
+  All owned processes exited. Full scope, references and evidence are in
+  `docs/reliable-materials-verification-2026-11-17.md`.
+
 ## 2026-11-17 — reliable lighting, normals and diagnostic outputs (Phase 3)
 
 - Native Houdini Light/Light Mixer parameters drive distant, rectangle, disk and

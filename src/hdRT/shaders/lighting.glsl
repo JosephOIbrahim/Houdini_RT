@@ -80,7 +80,7 @@ bool occluded(vec3 origin, vec3 direction, float limit) {
     return closestLight(origin,direction,limit,index,distance,normal);
 }
 
-vec3 distantEmission(vec3 direction, float bsdfPdf) {
+vec3 distantEmission(vec3 direction, float bsdfPdf, bool bsdfDelta) {
     vec3 value=vec3(0);
     for (uint i=0u; i<frame.pass.z; ++i) {
         LightGpu light=lights.rows[i];
@@ -88,7 +88,7 @@ vec3 distantEmission(vec3 direction, float bsdfPdf) {
         vec3 difference=direction+light.normalRadius.xyz;
         if (dot(difference,difference) > solidAngle(light)/PI) continue;
         float pdf=light.radiance.w / solidAngle(light);
-        value += light.radiance.rgb * powerWeight(bsdfPdf,pdf);
+        value += light.radiance.rgb * (bsdfDelta ? 1.0 : powerWeight(bsdfPdf,pdf));
     }
     return value;
 }
@@ -138,4 +138,52 @@ vec3 directLight(vec3 origin, vec3 ng, vec3 ns, inout uint rng) {
     float bsdfPdf=cosine/PI;
     float weight=delta ? 1.0 : powerWeight(pdf,bsdfPdf);
     return light.radiance.rgb * (cosine*weight/(PI*pdf));
+}
+
+// The same emitter proposal, evaluated with the resolved OpenPBR BSDF.
+vec3 directMaterialLight(vec3 origin, vec3 ng, vec3 ns, OpenPBR_PreparedBsdf bsdf, inout uint rng) {
+    if (lights.rows[frame.pass.z-1u].selection.x <= 0.0) return vec3(0);
+    float choice=rand01(rng);
+    uint index=frame.pass.z-1u;
+    for (uint i=0u; i<frame.pass.z; ++i)
+        if (choice < lights.rows[i].selection.x) { index=i; break; }
+    LightGpu light=lights.rows[index];
+    int type=int(light.positionType.w);
+    bool delta=type == 3 && solidAngle(light) <= 0.0;
+    vec3 direction;
+    float pdf=light.radiance.w, distance=T_MAX;
+    if (type == 3) {
+        direction=-light.normalRadius.xyz;
+        if (!delta) {
+            float oneMinusCosine=rand01(rng)*solidAngle(light)/(2.0*PI);
+            direction=around(direction,oneMinusCosine,2.0*PI*rand01(rng));
+            pdf /= solidAngle(light);
+        }
+    } else {
+        vec3 point, normal=light.normalRadius.xyz;
+        float a=rand01(rng), b=rand01(rng);
+        if (type == 2) {
+            float z=1.0-2.0*a, r=sqrt(max(0.0,1.0-z*z));
+            normal=vec3(r*cos(2.0*PI*b),r*sin(2.0*PI*b),z);
+            point=light.positionType.xyz + light.normalRadius.w*normal;
+        } else {
+            vec2 uv = type == 0 ? 2.0*vec2(a,b)-1.0 : sqrt(a)*vec2(cos(2.0*PI*b),sin(2.0*PI*b));
+            point=light.positionType.xyz + uv.x*light.basisUArea.xyz + uv.y*light.basisVCos.xyz;
+        }
+        vec3 offset=point-origin;
+        distance=length(offset);
+        if (distance <= 1e-6) return vec3(0);
+        direction=offset/distance;
+        float cosine=dot(normal,-direction);
+        if (cosine <= 0.0) return vec3(0);
+        pdf *= distance*distance / (light.basisUArea.w*cosine);
+    }
+    float cosine=dot(ns,direction);
+    if (cosine <= 0.0 || dot(ng,direction) <= 0.0 || pdf <= 0.0) return vec3(0);
+    // Stop before the sampled emitter; a blocker beyond it cannot shadow it.
+    float limit=type == 3 ? T_MAX : max(0.0,distance - max(1e-5, distance*2e-5));
+    if (occluded(origin,direction,limit)) return vec3(0);
+    float bsdfPdf=openpbr_pdf(bsdf,direction);
+    float weight=delta ? 1.0 : powerWeight(pdf,bsdfPdf);
+    return light.radiance.rgb * materialEval(bsdf,direction) * (weight/pdf);
 }

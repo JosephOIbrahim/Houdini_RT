@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from .material_support import MaterialInspector, validate_policy
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class CapabilityProfile:
     aovs: frozenset
     build_id: str = ""
     limitations: tuple = ()
+    materials: dict = field(default_factory=dict)
 
 
 def load_profile(environ=None, registry=None):
@@ -64,10 +66,14 @@ def load_profile(environ=None, registry=None):
             limitations = data.get("limitations", [])
             if not isinstance(limitations, list) or not all(isinstance(v, str) for v in limitations):
                 raise ValueError("Invalid capability profile limitations.")
+            policy = data.get("material_support", {})
+            if not isinstance(policy, dict):
+                raise ValueError("Invalid installed material capability policy.")
+            validate_policy(policy)
             return CapabilityProfile(str(path.resolve()), version,
                                      frozenset(data["supported_lights"]),
                                      frozenset(data["supported_aovs"]), str(data.get("build_id", "")),
-                                     tuple(limitations))
+                                     tuple(limitations), policy)
     raise ValueError("Installed HoudiniRT capability profile was not found. Check the integrated installation.")
 
 
@@ -91,6 +97,8 @@ class SupportReport:
     findings: list = field(default_factory=list)
     omitted_findings: int = 0
     profile: object = None
+    material_bindings: int = 0
+    supported_material_bindings: int = 0
 
     def text(self):
         profile = self.profile
@@ -102,7 +110,12 @@ class SupportReport:
             lines += ["Capability profile: " + profile.version, profile.path,
                       "Profile build: " + (profile.build_id or "not specified"),
                       "Outputs supported by profile: " + ", ".join(sorted(profile.aovs)),
-                      "Shading: matte displayColor; material graphs are not evaluated."]
+                      ("Shading: opaque isotropic OpenPBR constants; unsupported materials use matte displayColor Lambert."
+                       if profile.materials else "Shading: matte displayColor; material graphs are not evaluated.")]
+            if profile.materials:
+                lines.append("Inspected material assignments: %d; within the profile: %d."
+                             % (self.material_bindings, self.supported_material_bindings))
+                lines.append("Edit materials through Material Library / OpenPBR Surface and Assign Material.")
             lines.extend("Profile limitation: " + item for item in profile.limitations)
         if self.detail:
             lines.append(self.detail)
@@ -128,6 +141,8 @@ class SceneSupportScan:
         self._usd, self._geom, self._tf = usd_modules
         self._hou, self._viewer, self._clock = hou_module, viewer, clock
         self._stage = self._iterator = self._notice = None
+        self._materials = None
+        self._supported_meshes, self._subset_meshes = set(), set()
         self._changed = False
         self._seen = set()
         self._max_prims, self._max_findings = max_prims, max_findings
@@ -143,6 +158,9 @@ class SceneSupportScan:
             if self._stage is None:
                 raise ValueError("The selected viewer has no displayed USD stage.")
             self._time = self._usd.TimeCode(self.report.frame)
+            if self.report.profile.materials:
+                from pxr import UsdShade
+                self._materials = MaterialInspector(UsdShade, self.report.profile.materials, self._time)
             self._notice = self._tf.Notice.Register(self._usd.Notice.ObjectsChanged,
                                                     self._on_stage_changed, self._stage)
             self._iterator = iter(self._stage.TraverseAll())
@@ -243,10 +261,14 @@ class SceneSupportScan:
             self._add(prim, "Instancing", "Instances are not expanded; prototype placement is not a reliable preview.")
         for rel in prim.GetRelationships():
             name = rel.GetName()
-            if name.startswith("material:binding") and rel.GetTargets():
+            if not self._materials and name.startswith("material:binding") and rel.GetTargets():
                 self._add(prim, "Material binding", "Material graphs are ignored; affected meshes use matte displayColor.")
         if typename == "Mesh":
             self._mesh(prim)
+            if self._materials:
+                self._mesh_material(prim)
+        elif typename == "GeomSubset" and self._materials:
+            self._subset_material(prim)
         elif typename in {"BasisCurves", "NurbsCurves", "Points", "Volume", "TetMesh"}:
             self._add(prim, typename, "This geometry type is not supported by the mesh renderer.")
         elif typename.split("_")[0] in {"Cube", "Sphere", "Cone", "Cylinder", "Capsule", "Plane"}:
@@ -259,6 +281,45 @@ class SceneSupportScan:
             if source_type != "raw" or source not in self.report.profile.aovs:
                 self._add(prim, "RenderVar " + (source or "(empty source)"),
                           "Authored %s output is outside the capability profile; actual viewer bindings were not queried." % source_type)
+
+    def _mesh_material(self, prim):
+        binding_api = self._materials.shade.MaterialBindingAPI
+        material, binding = binding_api(prim).ComputeBoundMaterial(materialPurpose="full")
+        if not material:
+            if binding and binding.GetTargets():
+                self._add(prim, "Material fallback", "Binding %s has no valid material; using matte displayColor Lambert."
+                          % binding.GetPath())
+            return
+        self.report.material_bindings += 1
+        issues = self._materials.inspect(material)
+        for issue in issues:
+            if issue.kind == "Not assessed":
+                self._add(prim, "Material interface", "%s — %s Bound material: %s."
+                          % (issue.path, issue.reason, material.GetPath()), issue.kind)
+            else:
+                self._add(prim, "Material fallback", "%s — %s. Bound material %s uses whole-mesh matte displayColor Lambert."
+                          % (issue.path, issue.reason, material.GetPath()))
+        path = str(prim.GetPath())
+        if not issues and path not in self._subset_meshes:
+            self._supported_meshes.add(path)
+        self.report.supported_material_bindings = len(self._supported_meshes)
+
+    def _subset_material(self, prim):
+        # Each subset consumes its own outer traversal item/time budget.
+        if self._value(prim, "familyName", "") != "materialBind" or self._value(prim, "elementType", "face") != "face":
+            return
+        parent = prim.GetParent()
+        if parent.GetTypeName() != "Mesh":
+            return
+        material, binding = self._materials.shade.MaterialBindingAPI(prim).ComputeBoundMaterial(materialPurpose="full")
+        if not material or not binding:
+            return
+        path = str(parent.GetPath())
+        self._subset_meshes.add(path)
+        self._supported_meshes.discard(path)
+        self.report.supported_material_bindings = len(self._supported_meshes)
+        self._add(parent, "Material subsets", "Assigned face subset %s is unsupported; the whole mesh uses matte displayColor Lambert."
+                  % prim.GetPath())
 
     def _mesh(self, prim):
         scheme = str(self._value(prim, "subdivisionScheme", "catmullClark"))
@@ -297,6 +358,12 @@ class SceneSupportScan:
             self._add(prim, "Finite light geometry",
                       "HoudiniRT renders this light as a visible opaque emitter. Karma's renderlightgeo "
                       "and lightgeocastsshadow switches are not evaluated.", "Limitation")
+        if self.report.profile.materials:
+            for name in ("inputs:diffuse", "inputs:specular"):
+                if self._value(prim, name, 1.0) != 1.0:
+                    self._add(prim, name,
+                              "OpenPBR requires light diffuse and specular controls at 1. "
+                              "The diffuse factor scales both lobes; the specular factor is ignored.", "Limitation")
         for name in ("inputs:texture:file", "inputs:shaping:ies:file"):
             value = self._value(prim, name, "")
             if self._asset_nonempty(value):

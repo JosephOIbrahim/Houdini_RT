@@ -16,6 +16,7 @@
 #include "pxr/base/vt/types.h"
 #include "pxr/usd/sdf/path.h"
 #include "vkFurnace.h"
+#include "material.h"
 
 #include <cstdint>
 #include <cstring>
@@ -54,6 +55,8 @@ struct HdRTMeshData
     int primId = -1;            ///< Hydra selection ID, never a transient GPU slot
     GfMatrix4d   transform{1.0}; ///< object to world
     GfVec3f      albedo{0.18f}; ///< constant displayColor; 18% grey when none is authored
+    SdfPath materialId;         ///< full-purpose binding, resolved by Hydra
+    bool materialSubsetsUnsupported = false;
     bool         visible = true;
     uint64_t geometryVersion = 0; ///< changes only with positions or topology
     uint64_t topologyVersion = 0; ///< changes only with topology (and first publication)
@@ -71,15 +74,32 @@ struct HdRTDomeData
 /// Everything the renderer needs from Hydra, copied out under the lock.
 struct HdRTSceneSnapshot
 {
-    uint64_t contentVersion = 0;   ///< moves on every mesh or light change, and only then
+    uint64_t contentVersion = 0;   ///< moves on actual mesh, light or material changes
     std::map<SdfPath, std::shared_ptr<const HdRTMeshData>> meshes;
     std::map<SdfPath, HdRTDomeData> domes;
     std::map<SdfPath, HdRTVkLight> lights;
+    std::map<SdfPath, std::shared_ptr<const HdRTMaterialData>> materials;
 };
 
 class HdRTScene
 {
 public:
+    void SetMaterial(const SdfPath& id, std::shared_ptr<const HdRTMaterialData> material)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto found = _snapshot.materials.find(id);
+        if (found != _snapshot.materials.end() && *found->second == *material)
+            return;
+        _snapshot.materials[id] = std::move(material);
+        ++_snapshot.contentVersion;
+    }
+
+    void RemoveMaterial(const SdfPath& id)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_snapshot.materials.erase(id)) ++_snapshot.contentVersion;
+    }
+
     void SetMesh(SdfPath const& id, std::shared_ptr<const HdRTMeshData> mesh)
     {
         std::lock_guard<std::mutex> lock(_mutex);

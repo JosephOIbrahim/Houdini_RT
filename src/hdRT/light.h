@@ -40,6 +40,7 @@ public:
     void Finalize(HdRenderParam *renderParam) override;
 private:
     TfToken _type;
+    bool _warnedLobeWeights = false;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

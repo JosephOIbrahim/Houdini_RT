@@ -4,7 +4,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 #extension GL_GOOGLE_include_directive : require
 
-// furnace.comp - the step 4 kernel: Lambertian path tracing of the Hydra scene under a uniform dome.
+// furnace.comp - progressive Hydra scene path tracing with bounded opaque OpenPBR materials.
 // (The file keeps its step 3 name so the build and the plugin resource path do not move.)
 //
 // One dispatch adds a bounded batch of samples per pixel: camera rays jittered inside a box filter one
@@ -12,11 +12,12 @@
 // carries its transform and visibility; geometry stays resident across placement/color edits.
 //
 //   - A camera ray that hits nothing is black with alpha 0: the dome is never visible to the camera.
-//   - The first hit plus `bounces` further diffuse bounces. A path that leaves the scene collects
+//   - The first hit plus `bounces` further surface bounces. A path that leaves the scene collects
 //     throughput * dome radiance. A path still inside after its last allowed bounce contributes nothing.
-//   - Lambertian: bounces are cosine-weighted about the shading normal, so each one multiplies the
+//   - Unbound/fallback Lambertian: bounces are cosine-weighted about the shading normal, so each multiplies the
 //     throughput by exactly the albedo; a sample below the geometric face ends the path. No clamping,
 //     no Russian roulette, no denoiser.
+//   - Bound OpenPBR: upstream eval/sample/pdf with texture LUTs; emitter proposals use full-BSDF MIS.
 //   - A face seen from behind shades as if its normal pointed at the viewer, and blocks light like any
 //     other (Karma does this whatever doubleSided says).
 //
@@ -47,7 +48,7 @@ layout(std430, set = 0, binding = 2) buffer Accum
 // Absolute sample indices preserve the random streams across batch boundaries and pause/resume.
 layout(push_constant) uniform Batch { uvec4 parameters; } batch;
 
-// Exact 48-byte MeshGpu layout in vkFurnace.cpp. Addresses refer to device-local indexed data.
+// Exact 112-byte MeshRow layout in vkFurnace.cpp. Addresses refer to device-local indexed data.
 struct MeshGpu {
     uint64_t positions;
     uint64_t normals;
@@ -55,6 +56,9 @@ struct MeshGpu {
     uint64_t faceIds;
     vec4 albedo;
     ivec4 metadata;
+    vec4 baseColorWeight;
+    vec4 specularColorWeight;
+    vec4 materialProperties;
 };
 layout(std430, set = 0, binding = 3) readonly buffer MeshTable { MeshGpu rows[]; } meshes;
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer FloatArray { float v[]; };
@@ -84,6 +88,14 @@ uint mix32(uint h)
 float rand01(inout uint state)
 {
     return float(pcg_next(state) >> 8u) * (1.0 / 16777216.0);
+}
+
+// OpenPBR's cosine sampler uses sqrt(u), so u=0 has zero PDF and discards a sample.
+// All 23-bit bin midpoints are exactly representable in float32 and exclude BOTH
+// endpoints. A 24-bit midpoint would round the largest value up to one.
+float randOpen01(inout uint state)
+{
+    return (float(pcg_next(state) >> 9u) + 0.5) * (1.0 / 8388608.0);
 }
 
 // A direction about the unit normal n with density cos(theta) / pi.
@@ -181,6 +193,7 @@ void surface(uint mesh, uint prim, vec2 bary, vec3 direction,
     ns = s;
 }
 
+#include "material.glsl"
 #include "lighting.glsl"
 #include "guides.glsl"
 
@@ -192,6 +205,7 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
     vec3 radiance = vec3(0.0);
     covered = false;
     float previousPdf = 0.0;
+    bool previousDelta = false;
 
     // Segment 0 is the camera ray; segment k > 0 leaves the k-th hit. Hits 1 .. budget+1 scatter.
     for (uint seg = 0u; seg <= budget + 1u; ++seg)
@@ -208,7 +222,7 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
             if (cosine > 0.0) {
                 float lightPdf = light.radiance.w * lightDistance*lightDistance / (light.basisUArea.w*cosine);
                 radiance += throughput * (seg == 0u ? light.selection.yzw :
-                    light.radiance.rgb * powerWeight(previousPdf, lightPdf));
+                    light.radiance.rgb * (previousDelta ? 1.0 : powerWeight(previousPdf, lightPdf)));
             }
             if (seg == 0u) covered = true;
             break;
@@ -218,7 +232,7 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
             if (seg > 0u)
             {
                 radiance += throughput * frame.dome.rgb;   // left the scene: the dome
-                radiance += throughput * distantEmission(direction, previousPdf);
+                radiance += throughput * distantEmission(direction, previousPdf, previousDelta);
             }
             break;                                         // a camera miss stays black, alpha 0
         }
@@ -233,11 +247,25 @@ vec3 path(vec3 origin, vec3 direction, inout uint rng, out bool covered)
 
         vec3 p, ng, ns;
         surface(mesh, prim, bary, direction, objectToWorld, worldToObject, p, ng, ns);
-        throughput *= meshes.rows[mesh].albedo.rgb;
 
         // Offset along the geometric normal, scaled with the magnitude of the position.
         const float m = max(1.0, max(abs(p.x), max(abs(p.y), abs(p.z))));
         origin = p + ng * (1.0e-4 * m);
+        if (meshes.rows[mesh].metadata.z != 0) {
+            if (dot(ns, -direction) <= 0.0) break;
+            OpenPBR_PreparedBsdf bsdf = prepareMaterial(meshes.rows[mesh], ns, -direction);
+            if (frame.pass.z > 0u) radiance += throughput * directMaterialLight(origin, ng, ns, bsdf, rng);
+            OpenPBR_DiffuseSpecular weight;
+            OpenPBR_BsdfLobeType lobe;
+            vec3 randoms = vec3(randOpen01(rng), randOpen01(rng), randOpen01(rng));
+            openpbr_sample(bsdf, randoms, direction, weight, previousPdf, lobe);
+            if (previousPdf <= 0.0 || dot(direction, ng) <= 0.0) break;
+            throughput *= openpbr_get_sum_of_diffuse_specular(weight);
+            previousDelta = bool(lobe & OpenPBR_BsdfLobeTypeSpecular);
+            continue;
+        }
+        throughput *= meshes.rows[mesh].albedo.rgb;
+        previousDelta = false;
         if (frame.pass.z > 0u) radiance += throughput * directLight(origin, ng, ns, rng);
         // Cosine about the shading normal. A sample that falls below the geometric face carries no light
         // (the Lambert BRDF with a shading normal is zero there), so the path ends. Measured against Karma

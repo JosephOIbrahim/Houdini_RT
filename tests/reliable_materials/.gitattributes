@@ -1,0 +1,6 @@
+# References and frozen judges are checked by byte hash; retain their exact bytes.
+* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Preserve the original native Houdini exports, including their generated doc string.
+usd/native_*.usda whitespace=-blank-at-eol,-blank-at-eof,space-before-tab,cr-at-eol
+# The pre-image frozen helper includes its original final blank line.
+installed/native_evidence.py whitespace=blank-at-eol,-blank-at-eof,space-before-tab,cr-at-eol

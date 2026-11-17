@@ -64,6 +64,13 @@ HdRTLight::Sync(HdSceneDelegate *sceneDelegate,
     dome.radiance = GfVec3f(float(scale * color[0]), float(scale * color[1]), float(scale * color[2]));
     dome.visible = sceneDelegate->GetVisible(id);
     const float diffuse = value("diffuse").GetWithDefault(1.0f);
+    const float specular = value("specular").GetWithDefault(1.0f);
+    const bool lobeWeightsUnsupported = diffuse != 1.0f || specular != 1.0f;
+    if (lobeWeightsUnsupported && !_warnedLobeWeights)
+        HdRTLog("WARNING: light %s has nondefault diffuse/specular multipliers; independent light "
+                "lobe weights are unsupported: diffuse scales the combined OpenPBR response, "
+                "specular is ignored (legacy matte behavior is retained)", id.GetText());
+    _warnedLobeWeights = lobeWeightsUnsupported;
 
     HDRT_DEBUG("dome %s: intensity %.6g exposure %.6g color (%.6g, %.6g, %.6g) -> radiance (%.6f, %.6f, %.6f), visible %d",
                id.GetText(), intensity, exposure, color[0], color[1], color[2],

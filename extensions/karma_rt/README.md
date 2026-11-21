@@ -35,6 +35,24 @@ KarmaRT v2.0 transforms Houdini 22 Solaris interactive lookdev using SideFX-docu
 
 ## How Non-Destructive `LOP:Custom` Overrides Work
 
+```mermaid
+flowchart TD
+    LOP["Solaris /stage LOP Graph (karmarendersettings = 128 spp, 1280x720)"]
+    PROD["Production USD Stage (apply_viewport_overrides = False)"]
+    CUSTOM["Session-Only LOP:Custom Layer (karma_rt_session_owner provenance)"]
+    VP["Viewport Composed Stage (apply_viewport_overrides = True)"]
+    KARMA["Karma XPU / CPU Interactive IPR (Zero Hydra Restarts, 0 Recooks)"]
+    DISK["USD Render ROP / husk Disk Output (100% Untouched)"]
+    GUARD["HipLifecycleGuard (BeforeSave Strip -> Clean .hip -> AfterSave Restore)"]
+
+    LOP --> PROD
+    PROD --> DISK
+    PROD --> VP
+    CUSTOM --> VP
+    VP --> KARMA
+    GUARD -. Strips owned specs on save .-> CUSTOM
+```
+
 KarmaRT strictly authors viewport overrides into Houdini's session-only **`LOP:Custom`** layer (`hou.lopViewportOverridesLayer.Custom`), never into your LOP graph or `karmarendersettings` node parameters:
 
 1. **Zero LOP Node Creation & Zero Recooks:** Your `/stage` graph, display flags, `cookCount()`, and production `UsdRender.Settings` parameters remain untouched.
@@ -42,6 +60,59 @@ KarmaRT strictly authors viewport overrides into Houdini's session-only **`LOP:C
 3. **Provenance-Stamped & Reversible:** Every USD attribute spec authored by KarmaRT carries `customData["karma_rt_session_owner"]`. Restoring surgically deletes **only** KarmaRT-owned specs while preserving any artist-authored `LOP:Custom` overrides.
 4. **Automatic `.hip` Save/Load Hygiene (`HipLifecycleGuard`):** Strips KarmaRT session specs before saving to disk, re-applies seamlessly after save, and sweeps any orphans on load.
 5. **Houdini `22.0.429` Reference Grid Guard:** Automatically hides and restores viewport reference plane and orthographic grids strictly on Houdini `22.0.429` when Clean Overlays are active.
+
+---
+
+## Session Controller & Auto-Turbo State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> READY_OFF
+    READY_OFF --> PREVIEW_DIFF : preview_preset (read-only)
+    PREVIEW_DIFF --> READY_OFF : cancel
+    READY_OFF --> ACTIVE_IDLE : activate_preset (LOP Custom)
+    PREVIEW_DIFF --> ACTIVE_IDLE : apply_verified
+
+    ACTIVE_IDLE --> ACTIVE_TURBO_INTERACT : camera tumble or stage edit
+    ACTIVE_TURBO_INTERACT --> ACTIVE_IDLE : 300ms quiet settle (self-echo suppressed)
+
+    ACTIVE_IDLE --> ACTIVE_PAUSED : pause viewport
+    ACTIVE_PAUSED --> ACTIVE_IDLE : resume viewport
+
+    ACTIVE_IDLE --> ACTIVE_DISK_RENDER_YIELD : yield VRAM for disk render
+    ACTIVE_DISK_RENDER_YIELD --> ACTIVE_IDLE : resume after disk render
+
+    ACTIVE_IDLE --> EXTERNAL_TAKEOVER : artist switches delegate in native menu
+    EXTERNAL_TAKEOVER --> READY_OFF : clean owned specs and drop lease
+
+    ACTIVE_IDLE --> RESTORING : restore or emergency_reset
+    ACTIVE_TURBO_INTERACT --> RESTORING : restore or emergency_reset
+    ACTIVE_PAUSED --> RESTORING : restore or emergency_reset
+    ACTIVE_DISK_RENDER_YIELD --> RESTORING : restore or emergency_reset
+    DEGRADED --> RESTORING : restore or emergency_reset
+    RESTORING --> READY_OFF : restore prior delegate and clear overrides
+```
+
+## Zero-Restart Override Apply Sequence
+
+```mermaid
+sequenceDiagram
+    participant Artist
+    participant UI as PySide6 Panel / Shelf
+    participant Ctrl as KarmaSessionController
+    participant Guard as UsdRenderers.json Guard
+    participant Layer as LOP Custom Sdf.Layer
+    participant Karma as Karma XPU / CPU Delegate
+
+    Artist->>UI: Click Live Draft / Crop 50% / Res 50%
+    UI->>Ctrl: activate_preset() / set_focus_crop()
+    Ctrl->>Guard: Validate zero restartrendersettings & check USD Image Filters
+    Guard-->>Ctrl: Verified zero-restart override batch
+    Ctrl->>Layer: Atomic Sdf.ChangeBlock write (stamped karma_rt_session_owner)
+    Layer-->>Ctrl: Readback verify (apply ~1.7 ms, cookCount delta = 0)
+    Layer-->>Karma: Live Hydra update (zero delegate restart)
+    Ctrl-->>UI: Emit SessionSnapshot (Emerald Safety Badge + Live GPU HUD)
+```
 
 ---
 

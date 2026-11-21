@@ -10,6 +10,37 @@
 > - [KarmaRT v2.0.0 Documentation & Quick Start](extensions/karma_rt/README.md)
 > - [KarmaRT v2.0.0 Release Notes](docs/releases/v2.0.0.md)
 
+### Solaris Realtime Ecosystem Overview
+
+```mermaid
+flowchart LR
+    STAGE["Solaris /stage LOP Network (Production USD + karmarendersettings)"]
+
+    subgraph PROD ["Production Render Path (100% Untouched)"]
+        NOOV["apply_viewport_overrides = False"]
+        ROP["USD Render ROP / husk Disk Output (128 spp Full Parity)"]
+        NOOV --> ROP
+    end
+
+    subgraph KARMART ["KarmaRT v2.0 Accelerator (Zero-Restart Session Layer)"]
+        UI["PySide6 Panel / Shelf / Radial Menu + Live GPU HUD"]
+        GUARD["UsdRenderers.json Zero-Restart Guard + Double-Denoise Check"]
+        CUSTOM["Session-Only LOP:Custom (Provenance Stamped, 0 Recooks)"]
+        DELEGATES["Karma XPU (56x-60x) / Karma CPU (~20x) / Houdini VK"]
+        UI --> GUARD --> CUSTOM --> DELEGATES
+    end
+
+    subgraph HDRT ["HoudiniRT Native Vulkan Delegate (v0.5.0)"]
+        PANEL["HoudiniRT Panel / RT Toggle"]
+        VKDEL["hdRT.dll Hydra Render Delegate (Vulkan Ray Query + OpenPBR)"]
+        PANEL --> VKDEL
+    end
+
+    STAGE --> NOOV
+    STAGE --> CUSTOM
+    STAGE --> VKDEL
+```
+
 HoudiniRT also includes a progressive GPU path tracer for Solaris, implemented as a Hydra
 render delegate with Vulkan inline ray queries and Adobe OpenPBR. Native Houdini
 nodes author the scene; the integrated HoudiniRT panel controls the chosen viewer.
@@ -56,6 +87,29 @@ or separate Python sidecar is required to render.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph CPU ["Hydra Sync & Execute (Main / CPU Threads)"]
+        SYNC["Hydra Sync (Mesh, Material, Light, Camera Extraction)"]
+        IMG["Async CPU Image Decode & OCIO Conversion"]
+        REQ["Immutable Request Publication (Lock-Free, No Vulkan Wait)"]
+        SYNC --> REQ
+        IMG --> REQ
+    end
+
+    subgraph GPU ["Dedicated Vulkan Render Thread"]
+        UPLOAD["GPU Upload + Persistent Object BLAS / Instance TLAS"]
+        TRACE["Short-Batch Vulkan Ray-Query Path Tracing & Accumulation"]
+        RESOLVE["Resolve Kernel (Scene-Linear Beauty & Diagnostic AOVs)"]
+        GEN["Generation Check & Pause Batch Boundary"]
+        UPLOAD --> TRACE --> RESOLVE --> GEN
+    end
+
+    VIEW["Solaris SceneViewer Display"]
+    REQ --> UPLOAD
+    GEN --> VIEW
+```
+
 Hydra Sync extracts CPU scene data. Execute publishes immutable requests without
 Vulkan calls or waiting for the render thread. Object-space mesh resources and
 BLASes persist; transforms/visibility update instances, and shading changes update
@@ -99,6 +153,7 @@ rules are specified in the current contract and `src/hdRT/capabilities.json`.
 
 | Path | Purpose |
 | --- | --- |
+| `extensions/karma_rt/` | KarmaRT v2.0.0 zero-restart Karma XPU/CPU Solaris lookdev accelerator |
 | `src/hdRT/` | Native delegate, GPU kernels and capability profile |
 | `extensions/rt_toggle/` | Integrated HoudiniRT artist controls and stage inspection |
 | `tests/` | Reproducible feature probes and independent judges |

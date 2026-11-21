@@ -5,7 +5,12 @@
 
 # HoudiniRT for Houdini 22
 
-HoudiniRT is a progressive GPU path tracer for Solaris, implemented as a Hydra
+> **New — KarmaRT v2.0.0 (Zero-Restart Karma XPU / CPU Solaris Accelerator):**
+> **[Download KarmaRT v2.0.0](https://github.com/JosephOIbrahim/Houdini_RT/releases/tag/v2.0.0)** for Windows x64 / Houdini `22.0.*` (`22.0.429` & `22.0.504` verified). Accelerates native Karma XPU up to **56×–60×** (and Karma CPU **~20×**) via non-destructive session-only `LOP:Custom` overrides with zero Hydra restarts, zero upstream recooks, live GPU/VRAM/OptiX HUD telemetry, Focus Crop, Resolution Scale, Clay / Headlight AO, Auto-Turbo, Freeze/Pin/Solo stage boosters, and an 11-detector H22 Scene Bottleneck Advisor.
+> - [KarmaRT v2.0.0 Documentation & Quick Start](extensions/karma_rt/README.md)
+> - [KarmaRT v2.0.0 Release Notes](docs/releases/v2.0.0.md)
+
+HoudiniRT also includes a progressive GPU path tracer for Solaris, implemented as a Hydra
 render delegate with Vulkan inline ray queries and Adobe OpenPBR. Native Houdini
 nodes author the scene; the integrated HoudiniRT panel controls the chosen viewer.
 

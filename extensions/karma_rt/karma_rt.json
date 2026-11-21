@@ -1,0 +1,35 @@
+{
+    "enable": "houdini_os == 'windows' and houdini_version >= '22.0' and houdini_version < '23.0'",
+    "show": true,
+    "load_package_once": true,
+    "env": [
+        {
+            "KARMA_RT_HOME": "%KARMA_RT_ROOT%"
+        },
+        {
+            "PYTHONPATH": {
+                "value": "$KARMA_RT_HOME/python",
+                "method": "append"
+            }
+        },
+        {
+            "HOUDINI_TOOLBAR_PATH": {
+                "value": "$KARMA_RT_HOME/houdini/toolbar",
+                "method": "prepend"
+            }
+        },
+        {
+            "HOUDINI_PANEL_PATH": {
+                "value": "$KARMA_RT_HOME/houdini/python_panels",
+                "method": "append"
+            }
+        },
+        {
+            "KARMA_XPU_NUM_PER_DEVICE_BLENDING_THREADS": "4"
+        },
+        {
+            "KARMA_XPU_OPTIX_SPARSE_TEXTURES": "1"
+        }
+    ],
+    "hpath": "$KARMA_RT_HOME/houdini"
+}

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <!-- This file contains definitions of shelves, toolbars, and tools.
+ It should not be hand-edited when it is being used by the application.
+ Note, that two definitions of the same element are not allowed in
+ a single file. -->
+
+  <toolshelf name="karma_rt" label="Karma RT">
+    <memberTool name="karma_rt_toggle"/>
+    <memberTool name="karma_rt_draft"/>
+    <memberTool name="karma_rt_lookdev"/>
+    <memberTool name="karma_rt_clay"/>
+    <memberTool name="karma_rt_final"/>
+    <memberTool name="karma_rt_vulkan"/>
+    <memberTool name="karma_rt_focus_crop"/>
+    <memberTool name="karma_rt_freeze"/>
+    <memberTool name="karma_rt_pin_stage"/>
+    <memberTool name="karma_rt_solo"/>
+    <memberTool name="karma_rt_autoturbo"/>
+    <memberTool name="karma_rt_overlays"/>
+    <memberTool name="karma_rt_pause"/>
+    <memberTool name="karma_rt_snapshot"/>
+    <memberTool name="karma_rt_restore"/>
+    <memberTool name="karma_rt_disk_yield"/>
+    <memberTool name="karma_rt_reset"/>
+    <memberTool name="karma_rt_panel"/>
+  </toolshelf>
+
+  <tool name="karma_rt_toggle" label="Toggle Karma RT" icon="ROP_karma">
+    <helpText><![CDATA[Toggle Karma RT zero-restart session overrides on or off without touching production LOPs.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import toggle_karma_rt
+toggle_karma_rt()]]></script>
+  </tool>
+
+  <tool name="karma_rt_draft" label="Live Draft" icon="LOP_karmarendersettings">
+    <helpText><![CDATA[Apply Live Draft (Max FPS) zero-restart Karma XPU viewport overrides.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import apply_live_draft
+apply_live_draft()]]></script>
+  </tool>
+
+  <tool name="karma_rt_lookdev" label="Interactive Lookdev" icon="ROP_karma">
+    <helpText><![CDATA[Apply balanced Interactive Lookdev + live denoising preset (zero-restart).]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import apply_interactive_lookdev
+apply_interactive_lookdev()]]></script>
+  </tool>
+
+  <tool name="karma_rt_final" label="Final Parity" icon="LOP_renderpass">
+    <helpText><![CDATA[Clear Karma RT session overrides and switch to full production Karma parity.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import apply_final_parity
+apply_final_parity()]]></script>
+  </tool>
+
+  <tool name="karma_rt_vulkan" label="Vulkan Layout" icon="VIEW_display_shaded">
+    <helpText><![CDATA[Switch the Solaris viewport to Houdini VK raytraced layout mode.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import apply_vulkan_layout
+apply_vulkan_layout()]]></script>
+  </tool>
+
+  <tool name="karma_rt_clay" label="Clay / Headlight AO" icon="VIEW_display_smooth_shaded">
+    <helpText><![CDATA[Apply zero-restart Clay / Headlight AO silhouette lighting preview without touching scene lights.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import apply_clay_headlight
+apply_clay_headlight()]]></script>
+  </tool>
+
+  <tool name="karma_rt_focus_crop" label="Cycle Focus Crop" icon="VIEW_crop">
+    <helpText><![CDATA[Cycle zero-restart dataWindowNDC Focus Crop (Full -> 50% 4x -> 33% 9x).]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import cycle_focus_crop
+cycle_focus_crop()]]></script>
+  </tool>
+
+  <tool name="karma_rt_freeze" label="Freeze Viewport" icon="BUTTONS_lock">
+    <helpText><![CDATA[Freeze or unfreeze Solaris viewport USD updates (setSceneGraphStageLocked).]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import toggle_freeze_viewport
+toggle_freeze_viewport()]]></script>
+  </tool>
+
+  <tool name="karma_rt_pin_stage" label="Pin Stage" icon="BUTTONS_pin">
+    <helpText><![CDATA[Pin Solaris stage to display flag (panesFollowCurrentNode=False) to prevent recomposition stalls.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import toggle_pin_stage
+toggle_pin_stage()]]></script>
+  </tool>
+
+  <tool name="karma_rt_solo" label="Solo Geo" icon="VIEW_display_ghost_other">
+    <helpText><![CDATA[Non-destructively solo selected Scene Graph geometry via LopViewportOverrides.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import solo_selected_geo
+solo_selected_geo()]]></script>
+  </tool>
+
+  <tool name="karma_rt_autoturbo" label="Auto-Turbo" icon="BUTTONS_play">
+    <helpText><![CDATA[Toggle Auto-Turbo interactive proxy boost during camera tumble and edits.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import toggle_auto_turbo
+toggle_auto_turbo()]]></script>
+  </tool>
+
+  <tool name="karma_rt_overlays" label="Clean Overlays" icon="VIEW_display_guides">
+    <helpText><![CDATA[Toggle clean lookdev viewport overlays and H22.0.429 reference grid guard.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import toggle_clean_overlays
+toggle_clean_overlays()]]></script>
+  </tool>
+
+  <tool name="karma_rt_pause" label="Pause / Resume" icon="BUTTONS_pause">
+    <helpText><![CDATA[Pause or resume interactive Karma Hydra rendering in the active Solaris viewer.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import toggle_pause
+toggle_pause()]]></script>
+  </tool>
+
+  <tool name="karma_rt_snapshot" label="Quick Snapshot" icon="BUTTONS_capture">
+    <helpText><![CDATA[Capture a quick lookdev snapshot from the active Solaris Scene Viewer.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import quick_snapshot
+quick_snapshot()]]></script>
+  </tool>
+
+  <tool name="karma_rt_restore" label="Restore Production" icon="BUTTONS_reload">
+    <helpText><![CDATA[Remove Karma RT LOP:Custom session overrides and restore the previous renderer.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import restore_production
+restore_production()]]></script>
+  </tool>
+
+  <tool name="karma_rt_disk_yield" label="Yield Disk Render" icon="ROP_usdrender">
+    <helpText><![CDATA[Yield interactive Karma VRAM for disk rendering, or resume if already yielded.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import yield_for_disk_render
+yield_for_disk_render()]]></script>
+  </tool>
+
+  <tool name="karma_rt_reset" label="Emergency Reset" icon="BUTTONS_clear">
+    <helpText><![CDATA[Force-clear all Karma RT session overrides, overlays, Auto-Turbo state, and locks.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import emergency_reset
+emergency_reset()]]></script>
+  </tool>
+
+  <tool name="karma_rt_panel" label="Karma RT Panel" icon="MISC_python">
+    <helpText><![CDATA[Focus or open the Karma RT PySide6 Python Panel.]]></helpText>
+    <toolSubmenu>Karma RT</toolSubmenu>
+    <script scriptType="python"><![CDATA[from karma_rt.ui.shelf_actions import open_panel
+open_panel()]]></script>
+  </tool>
+</shelfDocument>

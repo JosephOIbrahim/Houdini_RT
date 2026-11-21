@@ -1,0 +1,58 @@
+{
+  "fileversion": "22.0.504",
+  "name": "karma_rt_radial",
+  "categories": "Solaris",
+  "pane": "scene",
+  "label": "Karma RT",
+  "type": "submenu",
+  "items": {
+    "0": {
+      "label": "Toggle Karma RT",
+      "type": "script_action",
+      "icon": "ROP_karma",
+      "script": "from karma_rt.ui.shelf_actions import toggle_karma_rt\ntoggle_karma_rt()"
+    },
+    "1": {
+      "label": "Auto-Turbo",
+      "type": "script_action",
+      "icon": "BUTTONS_play",
+      "script": "from karma_rt.ui.shelf_actions import toggle_auto_turbo\ntoggle_auto_turbo()"
+    },
+    "2": {
+      "label": "Live Draft",
+      "type": "script_action",
+      "icon": "LOP_karmarendersettings",
+      "script": "from karma_rt.ui.shelf_actions import apply_live_draft\napply_live_draft()"
+    },
+    "3": {
+      "label": "Quick Snapshot",
+      "type": "script_action",
+      "icon": "BUTTONS_capture",
+      "script": "from karma_rt.ui.shelf_actions import quick_snapshot\nquick_snapshot()"
+    },
+    "4": {
+      "label": "Interactive Lookdev",
+      "type": "script_action",
+      "icon": "ROP_karma",
+      "script": "from karma_rt.ui.shelf_actions import apply_interactive_lookdev\napply_interactive_lookdev()"
+    },
+    "5": {
+      "label": "Restore Production",
+      "type": "script_action",
+      "icon": "BUTTONS_reload",
+      "script": "from karma_rt.ui.shelf_actions import restore_production\nrestore_production()"
+    },
+    "6": {
+      "label": "Final Parity",
+      "type": "script_action",
+      "icon": "LOP_renderpass",
+      "script": "from karma_rt.ui.shelf_actions import apply_final_parity\napply_final_parity()"
+    },
+    "7": {
+      "label": "Clean Overlays",
+      "type": "script_action",
+      "icon": "VIEW_display_guides",
+      "script": "from karma_rt.ui.shelf_actions import toggle_clean_overlays\ntoggle_clean_overlays()"
+    }
+  }
+}

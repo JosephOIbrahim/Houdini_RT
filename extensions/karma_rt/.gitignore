@@ -1,0 +1,24 @@
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Release build artifacts & transient smoke evidence
+dist/
+build/
+demo/smoke_evidence/
+
+# Houdini temporary & backup files
+backup/
+*.hip.bak*
+*.hiplc.bak*
+*.hipnc.bak*
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
